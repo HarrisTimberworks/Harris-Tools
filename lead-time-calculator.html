@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Harris Timberworks — Lead Time Calculator</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #F7F5F0;
+    --surface: #FFFFFF;
+    --surface-2: #F2EFE9;
+    --border: #E0DDD6;
+    --border-strong: #C8C4BC;
+    --text-primary: #1A1916;
+    --text-secondary: #6B6860;
+    --text-muted: #9E9B94;
+    --accent: #2B4A3F;
+    --accent-light: #E8F0EE;
+    --accent-text: #1A3229;
+    --warn: #7A3B1E;
+    --warn-bg: #FDF0E8;
+    --warn-border: #E8C4A4;
+    --danger: #8B2020;
+    --danger-bg: #FDF0F0;
+    --mono: 'DM Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  .page {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+  }
+
+  .header {
+    margin-bottom: 40px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .wordmark {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    font-size: 26px;
+    font-weight: 300;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+
+  h1 span {
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  .subtitle {
+    margin-top: 8px;
+    font-size: 14px;
+    color: var(--text-secondary);
+    font-weight: 300;
+    line-height: 1.5;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin-bottom: 16px;
+  }
+
+  .card-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+  }
+
+  .field-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  .field-grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 20px;
+  }
+
+  .field { display: flex; flex-direction: column; gap: 7px; }
+
+  .field label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 0.01em;
+  }
+
+  .seg {
+    display: flex;
+    gap: 4px;
+    background: var(--surface-2);
+    padding: 3px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+
+  .seg-btn {
+    flex: 1;
+    padding: 7px 6px;
+    font-size: 12px;
+    font-weight: 400;
+    font-family: var(--sans);
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    transition: all 0.12s ease;
+    text-align: center;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
+  .seg-btn:hover { background: var(--surface); color: var(--text-primary); }
+
+  .seg-btn.active {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 500;
+  }
+
+  .comp-seg { gap: 3px; }
+  .comp-seg .seg-btn { padding: 7px 4px; }
+
+  input[type="number"], input[type="date"], select {
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--text-primary);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.12s;
+    -webkit-appearance: none;
+  }
+
+  input[type="number"]:focus, input[type="date"]:focus, select:focus {
+    border-color: var(--accent);
+  }
+
+  select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236B6860' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 32px;
+    cursor: pointer;
+  }
+
+  .result-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 300;
+  }
+
+  .result-empty .icon {
+    font-size: 28px;
+    margin-bottom: 10px;
+    opacity: 0.4;
+  }
+
+  .result-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .delivery-date {
+    font-size: 28px;
+    font-weight: 300;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+
+  .delivery-date strong { font-weight: 500; color: var(--accent); }
+
+  .lead-weeks {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 5px;
+  }
+
+  .result-badges {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+
+  .badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .badge-type {
+    background: var(--accent-light);
+    color: var(--accent-text);
+  }
+
+  .badge-warn {
+    background: var(--warn-bg);
+    color: var(--warn);
+    border: 1px solid var(--warn-border);
+  }
+
+  .timeline { margin-bottom: 24px; }
+
+  .tl-section-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+
+  .tl-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tl-row:last-child { border-bottom: none; }
+
+  .tl-pip {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .tl-label {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 400;
+  }
+
+  .tl-label .tl-alert {
+    display: block;
+    font-size: 11px;
+    color: var(--danger);
+    margin-top: 2px;
+    font-weight: 500;
+  }
+
+  .tl-date {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+
+  .tl-row.tl-delivery .tl-label {
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .tl-row.tl-delivery .tl-date {
+    color: var(--accent);
+  }
+
+  .cap-section {
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+
+  .cap-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+  }
+
+  .cap-bars { display: flex; flex-direction: column; gap: 9px; }
+
+  .cap-row { display: flex; align-items: center; gap: 10px; }
+
+  .cap-name {
+    font-size: 12px;
+    color: var(--text-secondary);
+    width: 96px;
+    flex-shrink: 0;
+  }
+
+  .cap-track {
+    flex: 1;
+    height: 5px;
+    background: var(--surface-2);
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+
+  .cap-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+
+  .cap-pct {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    width: 34px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .warn-box {
+    margin-top: 16px;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 12px;
+    color: var(--warn);
+    line-height: 1.5;
+  }
+
+  .warn-box strong { font-weight: 500; display: block; margin-bottom: 2px; }
+
+  .footer {
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  @media (max-width: 560px) {
+    .field-grid, .field-grid-3 { grid-template-columns: 1fr; }
+    .page { padding: 24px 16px 60px; }
+    h1 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div class="wordmark">Harris Timberworks</div>
+    <h1>Lead Time <span>Calculator</span></h1>
+    <p class="subtitle">Enter job details to generate an estimated delivery date and production milestone schedule.<br>Confirm all dates with the PM before communicating to clients.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-label">01 — Job type</div>
+    <div class="field">
+      <div class="seg" id="type-seg">
+        <button class="seg-btn active" onclick="setType('ff')">Residential — face frame</button>
+        <button class="seg-btn" onclick="setType('fl')">Residential — frameless</button>
+        <button class="seg-btn" onclick="setType('co')">Commercial</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">02 — Job details</div>
+    <div class="field-grid" style="margin-bottom:20px;">
+      <div class="field">
+        <label>Box count</label>
+        <input type="number" id="boxes" min="1" max="300" value="24" oninput="calc()">
+      </div>
+      <div class="field">
+        <label>Deposit / start date</label>
+        <input type="date" id="startdate" oninput="calc()">
+      </div>
+    </div>
+    <div class="field-grid-3">
+      <div class="field">
+        <label>Complexity score</label>
+        <div class="seg comp-seg">
+          <button class="seg-btn active" onclick="setComp(1)">1</button>
+          <button class="seg-btn" onclick="setComp(2)">2</button>
+          <button class="seg-btn" onclick="setComp(3)">3</button>
+          <button class="seg-btn" onclick="setComp(4)">4</button>
+          <button class="seg-btn" onclick="setComp(5)">5</button>
+        </div>
+      </div>
+      <div class="field" id="inset-field">
+        <label>Inset doors</label>
+        <div class="seg">
+          <button class="seg-btn active" id="ins-no" onclick="setInset(false)">No</button>
+          <button class="seg-btn" id="ins-yes" onclick="setInset(true)">Yes</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Custom elements</label>
+        <select id="cu" onchange="calc()">
+          <option value="0">None</option>
+          <option value="25">CU1 — light (25h)</option>
+          <option value="50">CU2 — moderate (50h)</option>
+          <option value="100">CU3 — heavy (100h)</option>
+          <option value="150">CU4 — complex (150h)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="result-card">
+    <div class="result-empty">
+      <div class="icon">◎</div>
+      Enter job details above to calculate lead time
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>Harris Timberworks Production System</span>
+    <span>Updated April 2026</span>
+  </div>
+
+</div>
+
+<script>
+  let jobType = 'ff';
+  let comp = 1;
+  let inset = false;
+
+  function setType(t) {
+    jobType = t;
+    document.querySelectorAll('#type-seg .seg-btn').forEach((b,i) => {
+      b.classList.toggle('active', ['ff','fl','co'][i] === t);
+    });
+    const inf = document.getElementById('inset-field');
+    inf.style.display = t === 'ff' ? '' : 'none';
+    if (t !== 'ff') inset = false;
+    calc();
+  }
+
+  function setComp(c) {
+    comp = c;
+    document.querySelectorAll('.comp-seg .seg-btn').forEach((b,i) => {
+      b.classList.toggle('active', i+1 === c);
+    });
+    calc();
+  }
+
+  function setInset(v) {
+    inset = v;
+    document.getElementById('ins-no').classList.toggle('active', !v);
+    document.getElementById('ins-yes').classList.toggle('active', v);
+    calc();
+  }
+
+  function addDays(d, n) {
+    const r = new Date(d);
+    r.setDate(r.getDate() + n);
+    return r;
+  }
+
+  function fmt(d) {
+    return d.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+  }
+
+  function fmtShort(d) {
+    return d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+  }
+
+  function loadColor(p) {
+    if (p >= 90) return '#C0392B';
+    if (p >= 70) return '#D4860A';
+    return '#2B7A4B';
+  }
+
+  function calc() {
+    const boxes = parseInt(document.getElementById('boxes').value) || 0;
+    const cu = parseInt(document.getElementById('cu').value) || 0;
+    const sv = document.getElementById('startdate').value;
+    const card = document.getElementById('result-card');
+
+    if (!sv || boxes < 1) {
+      card.innerHTML = '<div class="result-empty"><div class="icon">◎</div>Enter job details above to calculate lead time</div>';
+      return;
+    }
+
+    const start = new Date(sv + 'T12:00:00');
+    const cm = [0, 0.8, 1.0, 1.15, 1.4, 1.75][comp];
+    const ia = (jobType === 'ff' && inset) ? 1.3 : 1.0;
+
+    const engBaseHrs = { ff: 0.6, fl: 0.4, co: 0.4 }[jobType];
+    const engHrs = (engBaseHrs * boxes * cm) + (cu * 0.15);
+    const engDays = Math.max(3, Math.ceil(engHrs / 8));
+
+    const cncHrs = 0.55 * boxes * cm;
+    const cncDays = Math.max(1, Math.ceil(cncHrs / 8));
+
+    let asm1Days = 0;
+    if (jobType === 'ff') {
+      const asm1Hrs = (0.8 * boxes * cm * ia) + (cu * 0.3);
+      asm1Days = Math.max(2, Math.ceil(asm1Hrs / 8));
+    }
+
+    const asm2BaseHrs = { ff: 0.25, fl: 0.35, co: 0.25 }[jobType];
+    const asm2Hrs = asm2BaseHrs * boxes * cm * ia;
+    const extraAsm2 = boxes > 22 ? Math.floor((boxes - 22) / 11) : 0;
+    const asm2Days = Math.max(2, Math.ceil(asm2Hrs / 8) + extraAsm2);
+
+    const finishBuf = jobType === 'co' ? 0 : 14;
+    const doorLead = jobType === 'co' ? 14 : 28;
+    const packBuf = 2;
+
+    let seqDays;
+    if (jobType === 'ff') seqDays = engDays + cncDays + asm1Days + finishBuf + asm2Days + packBuf;
+    else if (jobType === 'fl') seqDays = engDays + cncDays + finishBuf + asm2Days + packBuf;
+    else seqDays = engDays + cncDays + asm2Days + packBuf;
+
+    const totalDays = Math.ceil(seqDays * 1.1);
+    const weeks = Math.round(totalDays / 7);
+    const delivery = addDays(start, totalDays);
+
+    const engComplete = addDays(start, engDays);
+    const doorOrderBy = addDays(delivery, -doorLead);
+    const cncStart = addDays(engComplete, 1);
+    const cncEnd = addDays(cncStart, cncDays - 1);
+
+    let rows = [];
+
+    if (jobType === 'ff') {
+      const asm1Start = addDays(cncEnd, 1);
+      const asm1End = addDays(asm1Start, asm1Days - 1);
+      const finishDrop = addDays(asm1End, 1);
+      const finishReturn = addDays(finishDrop, 7);
+      const asm2Start = addDays(finishReturn, 1);
+
+      rows = [
+        { label: 'Engineering complete', date: engComplete, color: '#185FA5', cls: '' },
+        { label: 'Door order by', date: doorOrderBy, color: '#C0392B', cls: '', alert: doorOrderBy <= engComplete ? 'Place order same day engineering releases' : null },
+        { label: 'CNC + Edgebanding complete', date: cncEnd, color: '#2B7A4B', cls: '' },
+        { label: 'Assembly 1 complete (full boxes)', date: asm1End, color: '#854F0B', cls: '' },
+        { label: 'Drop boxes at finisher', date: finishDrop, color: '#534AB7', cls: '' },
+        { label: 'Return from finisher', date: finishReturn, color: '#534AB7', cls: '' },
+        { label: 'Assembly 2 start — hardware, doors, drawers', date: asm2Start, color: '#0F6E56', cls: '' },
+        { label: 'Pack + ship by', date: addDays(delivery, -packBuf), color: '#888780', cls: '' },
+        { label: 'Delivery', date: delivery, color: '#2B4A3F', cls: 'tl-delivery' },
+      ];
+    } else if (jobType === 'fl') {
+      const finishDrop = addDays(cncEnd, 1);
+      const finishReturn = addDays(finishDrop, 7);
+      const asm2Start = addDays(finishReturn, 1);
+      rows = [
+        { label: 'Engineering complete', date: engComplete, color: '#185FA5', cls: '' },
+        { label: 'Door order by', date: doorOrderBy, color: '#C0392B', cls: '', alert: doorOrderBy <= engComplete ? 'Place order same day engineering releases' : null },
+        { label: 'CNC + Edgebanding complete', date: cncEnd, color: '#2B7A4B', cls: '' },
+        { label: 'Send panels + doors + drawer fronts to finisher', date: finishDrop, color: '#534AB7', cls: '' },
+        { label: 'Return from finisher', date: finishReturn, color: '#534AB7', cls: '' },
+        { label: 'Assembly 2 start — full box build + hardware', date: asm2Start, color: '#0F6E56', cls: '' },
+        { label: 'Pack + ship by', date: addDays(delivery, -packBuf), color: '#888780', cls: '' },
+        { label: 'Delivery', date: delivery, color: '#2B4A3F', cls: 'tl-delivery' },
+      ];
+    } else {
+      const asm2Start = addDays(cncEnd, 1);
+      rows = [
+        { label: 'Engineering complete', date: engComplete, color: '#185FA5', cls: '' },
+        { label: 'Door order by', date: doorOrderBy, color: '#C0392B', cls: '' },
+        { label: 'CNC + Edgebanding complete', date: cncEnd, color: '#2B7A4B', cls: '' },
+        { label: 'Assembly 2 start', date: asm2Start, color: '#0F6E56', cls: '' },
+        { label: 'Pack + ship by', date: addDays(delivery, -packBuf), color: '#888780', cls: '' },
+        { label: 'Delivery', date: delivery, color: '#2B4A3F', cls: 'tl-delivery' },
+      ];
+    }
+
+    const tlHtml = rows.map(r => `
+      <div class="tl-row ${r.cls}">
+        <div class="tl-pip" style="background:${r.color};"></div>
+        <div class="tl-label">${r.label}${r.alert ? `<span class="tl-alert">↑ ${r.alert}</span>` : ''}</div>
+        <div class="tl-date">${fmtShort(r.date)}</div>
+      </div>`).join('');
+
+    const typeLabels = { ff: 'Face Frame', fl: 'Frameless', co: 'Commercial' };
+    const engLoad = Math.min(100, Math.round((engHrs / 66.6) * 100));
+    const asm2Load = Math.min(100, Math.round((asm2Hrs / 26.1) * 100));
+    const asm1Load = jobType === 'ff' ? Math.min(100, Math.round(((0.8 * boxes * cm * ia) / 44.1) * 100)) : null;
+
+    const capRows = [
+      { name: 'Engineering', pct: engLoad },
+      ...(asm1Load !== null ? [{ name: 'Assembly 1', pct: asm1Load }] : []),
+      { name: 'Assembly 2', pct: asm2Load },
+    ].map(c => `
+      <div class="cap-row">
+        <div class="cap-name">${c.name}</div>
+        <div class="cap-track"><div class="cap-fill" style="width:${c.pct}%;background:${loadColor(c.pct)};"></div></div>
+        <div class="cap-pct" style="color:${loadColor(c.pct)};">${c.pct}%</div>
+      </div>`).join('');
+
+    const rushWarn = totalDays < 21 ? `<div class="warn-box"><strong>Short lead time</strong>Review engineering and assembly capacity before committing to this date.</div>` : '';
+    const highLoad = (engLoad >= 90 || asm2Load >= 90) ? `<div class="warn-box"><strong>High station load</strong>One or more stations near capacity this week — confirm availability with the PM before quoting.</div>` : '';
+
+    card.innerHTML = `
+      <div class="result-header">
+        <div>
+          <div class="delivery-date">Est. delivery <strong>${fmt(delivery)}</strong></div>
+          <div class="lead-weeks">${weeks} week lead time · ${totalDays} production days</div>
+        </div>
+        <div class="result-badges">
+          <div class="badge badge-type">${typeLabels[jobType]}</div>
+          ${inset ? '<div class="badge badge-warn">Inset</div>' : ''}
+          ${comp >= 4 ? `<div class="badge badge-warn">Complexity ${comp}</div>` : ''}
+        </div>
+      </div>
+      <div class="timeline">
+        <div class="tl-section-label">Production milestones</div>
+        ${tlHtml}
+      </div>
+      <div class="cap-section">
+        <div class="cap-title">Estimated station load · % of weekly capacity</div>
+        <div class="cap-bars">${capRows}</div>
+      </div>
+      ${rushWarn}${highLoad}
+    `;
+  }
+
+  document.getElementById('startdate').value = new Date().toISOString().split('T')[0];
+  calc();
+</script>
+</body>
+</html>
