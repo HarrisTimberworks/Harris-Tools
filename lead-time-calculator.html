@@ -540,7 +540,7 @@
     const engHrs = (engBaseHrs * boxes * cm) + (cu * 0.15);
     const engDays = Math.max(3, Math.ceil(engHrs / 8));
 
-    const cncHrs = 0.55 * boxes * cm;
+    const cncHrs = (jobType === 'ff' ? 0.38 : 0.55) * boxes * cm;
     const cncDays = Math.max(1, Math.ceil(cncHrs / 8));
 
     let asm1Days = 0;
