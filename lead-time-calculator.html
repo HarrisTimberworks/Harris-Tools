@@ -421,6 +421,10 @@
         <input type="number" id="boxes" min="1" max="300" value="24" oninput="calc()">
       </div>
       <div class="field">
+        <label>Miter Fold LF</label>
+        <input type="number" id="miterfold" min="0" max="500" value="0" oninput="calc()">
+      </div>
+      <div class="field">
         <label>Deposit / start date</label>
         <input type="date" id="startdate" oninput="calc()">
       </div>
@@ -523,6 +527,7 @@
 
   function calc() {
     const boxes = parseInt(document.getElementById('boxes').value) || 0;
+    const miterFoldLF = parseFloat(document.getElementById('miterfold').value) || 0;
     const cu = parseInt(document.getElementById('cu').value) || 0;
     const sv = document.getElementById('startdate').value;
     const card = document.getElementById('result-card');
@@ -540,7 +545,7 @@
     const engHrs = (engBaseHrs * boxes * cm) + (cu * 0.15);
     const engDays = Math.max(3, Math.ceil(engHrs / 8));
 
-    const cncHrs = (jobType === 'ff' ? 0.38 : 0.55) * boxes * cm;
+    const cncHrs = (jobType === 'ff' ? 0.38 : 0.55) * boxes * cm + (miterFoldLF * 0.0167);
     const cncDays = Math.max(1, Math.ceil(cncHrs / 8));
 
     let asm1Days = 0;
