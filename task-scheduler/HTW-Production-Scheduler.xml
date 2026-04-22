@@ -1,0 +1,99 @@
+﻿<?xml version="1.0" encoding="UTF-16"?>
+
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+
+  <RegistrationInfo>
+
+    <Date>2026-04-22T15:27:11.2748999</Date>
+
+    <Author>CHRIS-ASUS\chris</Author>
+
+    <Description>Checks Production Load Board Every 15 Min for Jobs tagged Ready to Schedule, auto-create subitems on Crew Allocation</Description>
+
+    <URI>\HTW Production Scheduler</URI>
+
+  </RegistrationInfo>
+
+  <Principals>
+
+    <Principal id="Author">
+
+      <UserId>S-1-5-21-4283531568-2558343314-1502023002-1001</UserId>
+
+      <LogonType>S4U</LogonType>
+
+    </Principal>
+
+  </Principals>
+
+  <Settings>
+
+    <AllowHardTerminate>false</AllowHardTerminate>
+
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+
+    <StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>
+
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+
+    <RestartOnFailure>
+
+      <Count>3</Count>
+
+      <Interval>PT5M</Interval>
+
+    </RestartOnFailure>
+
+    <StartWhenAvailable>true</StartWhenAvailable>
+
+    <WakeToRun>true</WakeToRun>
+
+    <IdleSettings>
+
+      <StopOnIdleEnd>true</StopOnIdleEnd>
+
+      <RestartOnIdle>false</RestartOnIdle>
+
+    </IdleSettings>
+
+  </Settings>
+
+  <Triggers>
+
+    <CalendarTrigger>
+
+      <StartBoundary>2026-04-23T06:00:00</StartBoundary>
+
+      <Repetition>
+
+        <Interval>PT15M</Interval>
+
+        <Duration>P1D</Duration>
+
+      </Repetition>
+
+      <ScheduleByDay>
+
+        <DaysInterval>1</DaysInterval>
+
+      </ScheduleByDay>
+
+    </CalendarTrigger>
+
+  </Triggers>
+
+  <Actions Context="Author">
+
+    <Exec>
+
+      <Command>C:\Users\chris\Harris-Tools\run-scheduler.bat</Command>
+
+      <WorkingDirectory>C:\Users\chris\Harris-Tools</WorkingDirectory>
+
+    </Exec>
+
+  </Actions>
+
+</Task>

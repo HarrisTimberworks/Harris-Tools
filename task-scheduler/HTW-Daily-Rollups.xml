@@ -1,0 +1,81 @@
+﻿<?xml version="1.0" encoding="UTF-16"?>
+
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+
+  <RegistrationInfo>
+
+    <Date>2026-04-21T13:01:31.5472304</Date>
+
+    <Author>CHRIS-ASUS\chris</Author>
+
+    <URI>\HTW Daily Rollups</URI>
+
+  </RegistrationInfo>
+
+  <Principals>
+
+    <Principal id="Author">
+
+      <UserId>S-1-5-21-4283531568-2558343314-1502023002-1001</UserId>
+
+      <LogonType>S4U</LogonType>
+
+    </Principal>
+
+  </Principals>
+
+  <Settings>
+
+    <AllowHardTerminate>false</AllowHardTerminate>
+
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+
+    <StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>
+
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+
+    <StartWhenAvailable>true</StartWhenAvailable>
+
+    <WakeToRun>true</WakeToRun>
+
+    <IdleSettings>
+
+      <StopOnIdleEnd>true</StopOnIdleEnd>
+
+      <RestartOnIdle>false</RestartOnIdle>
+
+    </IdleSettings>
+
+  </Settings>
+
+  <Triggers>
+
+    <CalendarTrigger>
+
+      <StartBoundary>2026-04-22T06:00:00</StartBoundary>
+
+      <ScheduleByDay>
+
+        <DaysInterval>1</DaysInterval>
+
+      </ScheduleByDay>
+
+    </CalendarTrigger>
+
+  </Triggers>
+
+  <Actions Context="Author">
+
+    <Exec>
+
+      <Command>C:\Users\chris\Harris-Tools\run-daily-rollups.bat</Command>
+
+      <WorkingDirectory>C:\Users\chris\Harris-Tools</WorkingDirectory>
+
+    </Exec>
+
+  </Actions>
+
+</Task>
