@@ -34,7 +34,7 @@ const MASTER_PM_BOARD = 9820786641;
 // Production Load Board columns
 const COL_PL_STATUS = 'color_mm26404x';
 const COL_PL_SUBTYPE = 'color_mm26yes1';
-const COL_PL_DELIVERY = 'date_mm267gh9';
+const COL_PL_DELIVERY = 'lookup_mm2n4nf4';  // Mirror column from Master PM Board
 const COL_PL_FINISHING_DAYS = 'numeric_mm2hdd1z';
 const COL_PL_FINISH_DROP = 'date_mm26qqv3';
 const COL_PL_FINISH_RETURN = 'date_mm2k17ef';
@@ -332,6 +332,9 @@ async function getReadyToScheduleJobs() {
             ... on BoardRelationValue {
               linked_item_ids
             }
+            ... on MirrorValue {
+              display_value
+            }
           }
         }
       }
@@ -501,7 +504,8 @@ async function scheduleJob(job) {
   const jobName = job.name;
   const jobId = job.id;
   const subtype = cols[COL_PL_SUBTYPE]?.text;
-  const deliveryDate = cols[COL_PL_DELIVERY]?.text;
+  // Mirror column returns value via display_value, not text
+  const deliveryDate = cols[COL_PL_DELIVERY]?.display_value || cols[COL_PL_DELIVERY]?.text;
   const finishingDays = parseFloat(cols[COL_PL_FINISHING_DAYS]?.text) || DEFAULT_FINISHING_DAYS;
 
   // Resolve the linked Master PM Board item ID (for subitem Related Job)
