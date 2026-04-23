@@ -18,9 +18,9 @@
     },
     "11693198809": {
       "name": "NC - Cator Ruma",
-      "note": "Countertop-only. Delivery pushed to 5/08. Ian 8hr Fri 4/24 head-start + Ken CNC + edgebanding subcontractor.",
+      "note": "Countertop-only, 80% edgebanding. Delivery firm at 4/29 (Wed of week 4/27). Ian 8hr Fri 4/24 head-start + Ken CNC week 4/27 + 32hr edgebanding subcontractor week 4/27 + Jonathan weekend 16hr on 4/25-26 + Bob subcontract Mon-Wed 4/27. Tight week but required.",
       "remainingHours": { "eng": 0, "panel": 40, "bench": 0, "prefin": 0, "postfin": 0 },
-      "customWindow": { "panel": { "start": "2026-04-27", "end": "2026-05-01" } }
+      "customWindow": { "panel": { "start": "2026-04-20", "end": "2026-05-01" } }
     },
     "11693164385": {
       "name": "MAG - SciTech",
