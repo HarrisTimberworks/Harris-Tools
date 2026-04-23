@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HTW Rebalance Plan Visualizer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #222; padding: 16px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .subtitle { color: #666; font-size: 13px; margin-bottom: 16px; }
+
+  .loader { background: white; padding: 20px; border-radius: 8px; border: 2px dashed #999; text-align: center; margin-bottom: 16px; cursor: pointer; }
+  .loader.hidden { display: none; }
+  .loader input { display: none; }
+  .loader label { cursor: pointer; color: #0066cc; font-weight: 500; }
+  .loader-info { font-size: 12px; color: #888; margin-top: 6px; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .stat { background: white; padding: 12px; border-radius: 6px; border-left: 3px solid #0066cc; }
+  .stat .label { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .stat.warn { border-left-color: #f39c12; }
+  .stat.alert { border-left-color: #e74c3c; }
+
+  .tabs { display: flex; gap: 2px; margin-bottom: 0; }
+  .tab { background: #ddd; padding: 8px 16px; cursor: pointer; border-radius: 6px 6px 0 0; font-size: 13px; user-select: none; }
+  .tab.active { background: white; font-weight: 600; }
+
+  .panel { background: white; padding: 16px; border-radius: 0 6px 6px 6px; min-height: 400px; overflow-x: auto; }
+  .panel.hidden { display: none; }
+
+  /* HEATMAP */
+  table.heatmap { border-collapse: collapse; font-size: 12px; }
+  table.heatmap th, table.heatmap td { border: 1px solid #ddd; padding: 6px 8px; text-align: center; min-width: 70px; }
+  table.heatmap th { background: #f8f8f8; font-weight: 600; position: sticky; top: 0; }
+  table.heatmap th.crew-col { position: sticky; left: 0; text-align: left; background: #f0f0f0; z-index: 2; }
+  table.heatmap td.crew-name { position: sticky; left: 0; background: #f8f8f8; font-weight: 500; text-align: left; z-index: 1; }
+  table.heatmap td.cell { cursor: pointer; font-weight: 500; transition: transform 0.1s; }
+  table.heatmap td.cell:hover { transform: scale(1.05); outline: 2px solid #333; }
+  .cell-empty { background: #f5f5f5; color: #aaa; }
+  .cell-low { background: #e8f5e9; }      /* <50% */
+  .cell-med { background: #fff9c4; }       /* 50-80% */
+  .cell-high { background: #ffe082; }      /* 80-100% */
+  .cell-over { background: #ef9a9a; color: #b71c1c; font-weight: 700; } /* >100% */
+  .cell-crit { background: #c62828; color: white; font-weight: 700; }  /* >130% */
+  .cell-info { font-size: 10px; color: #666; display: block; }
+
+  /* GANTT */
+  .gantt { position: relative; }
+  .gantt-header { display: flex; align-items: center; border-bottom: 2px solid #333; padding-bottom: 4px; margin-bottom: 4px; font-size: 11px; font-weight: 600; }
+  .gantt-job-col { width: 220px; flex-shrink: 0; padding-left: 4px; }
+  .gantt-weeks { display: flex; flex: 1; }
+  .gantt-week { flex: 1; min-width: 60px; text-align: center; border-left: 1px solid #eee; padding: 0 2px; }
+  .gantt-row { display: flex; align-items: center; padding: 4px 0; border-bottom: 1px solid #f0f0f0; }
+  .gantt-row:hover { background: #fafafa; }
+  .gantt-job-name { width: 220px; flex-shrink: 0; font-size: 12px; padding-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gantt-track { position: relative; flex: 1; height: 24px; display: flex; }
+  .gantt-cell { flex: 1; min-width: 60px; position: relative; border-left: 1px solid #f0f0f0; }
+  .gantt-bar { position: absolute; top: 4px; height: 16px; border-radius: 3px; color: white; font-size: 10px; line-height: 16px; padding: 0 4px; overflow: hidden; white-space: nowrap; opacity: 0.9; cursor: pointer; }
+  .gantt-bar:hover { opacity: 1; outline: 2px solid #333; }
+
+  .station-Engineering { background: #5e35b1; }
+  .station-Panel { background: #00897b; }
+  .station-Benchwork { background: #d84315; }
+  .station-PreFin { background: #fb8c00; }
+  .station-PostFin { background: #8e24aa; }
+  .station-PackShip { background: #455a64; }
+  .station-Delivery { background: #263238; }
+
+  .legend { display: flex; gap: 12px; margin-top: 12px; font-size: 11px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 2px; }
+
+  /* DETAIL PANEL */
+  .detail-panel { background: #fafafa; padding: 12px; border-radius: 6px; margin-top: 16px; font-size: 12px; }
+  .detail-panel h3 { font-size: 14px; margin-bottom: 6px; }
+  .detail-panel table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  .detail-panel th, .detail-panel td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #e0e0e0; }
+  .detail-panel th { font-weight: 600; background: white; }
+  .detail-panel .pre-existing { color: #888; font-style: italic; }
+
+  .warnings { background: #fff3e0; border-left: 3px solid #f39c12; padding: 8px 12px; margin-top: 12px; font-size: 12px; border-radius: 0 4px 4px 0; }
+  .warnings ul { margin-left: 18px; }
+
+  /* JOB LIST */
+  .job-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+  .job-card { background: #fafafa; padding: 10px; border-radius: 6px; border-left: 3px solid #0066cc; font-size: 12px; }
+  .job-card h4 { font-size: 13px; margin-bottom: 4px; }
+  .job-card .meta { color: #666; font-size: 11px; margin-bottom: 4px; }
+  .job-card .stations { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+  .job-card .station-chip { font-size: 10px; padding: 2px 6px; border-radius: 10px; color: white; }
+</style>
+</head>
+<body>
+
+<h1>HTW Production Rebalance Plan</h1>
+<div class="subtitle" id="planMeta">No plan loaded</div>
+
+<div class="loader" id="loader">
+  <label for="fileInput">📁 Click to load a plan JSON file</label>
+  <input type="file" id="fileInput" accept=".json">
+  <div class="loader-info">Expects output from <code>rebalance-schedule.js --plan</code> (logs/rebalance-plan-YYYY-MM-DD.json)</div>
+</div>
+
+<div id="content" class="hidden">
+
+<div class="stats" id="stats"></div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="heatmap">Capacity Heatmap</div>
+  <div class="tab" data-tab="gantt">Job Gantt</div>
+  <div class="tab" data-tab="jobs">Jobs</div>
+</div>
+
+<div class="panel" id="panel-heatmap">
+  <table class="heatmap" id="heatmapTable"></table>
+  <div class="legend" style="margin-top: 12px;">
+    <div class="legend-item"><span class="legend-swatch cell-empty"></span> No work</div>
+    <div class="legend-item"><span class="legend-swatch cell-low"></span> &lt; 50%</div>
+    <div class="legend-item"><span class="legend-swatch cell-med"></span> 50–80%</div>
+    <div class="legend-item"><span class="legend-swatch cell-high"></span> 80–100%</div>
+    <div class="legend-item"><span class="legend-swatch cell-over"></span> Over cap</div>
+    <div class="legend-item"><span class="legend-swatch cell-crit"></span> Critical (&gt;130%)</div>
+  </div>
+  <div class="detail-panel hidden" id="heatmapDetail"></div>
+</div>
+
+<div class="panel hidden" id="panel-gantt">
+  <div class="gantt" id="ganttChart"></div>
+  <div class="legend" style="margin-top: 12px;">
+    <div class="legend-item"><span class="legend-swatch station-Engineering"></span> Engineering</div>
+    <div class="legend-item"><span class="legend-swatch station-Panel"></span> Panel Processing</div>
+    <div class="legend-item"><span class="legend-swatch station-Benchwork"></span> Benchwork</div>
+    <div class="legend-item"><span class="legend-swatch station-PreFin"></span> Pre Fin</div>
+    <div class="legend-item"><span class="legend-swatch station-PostFin"></span> Post Fin</div>
+    <div class="legend-item"><span class="legend-swatch station-PackShip"></span> Pack &amp; Ship</div>
+    <div class="legend-item"><span class="legend-swatch station-Delivery"></span> Delivery</div>
+  </div>
+</div>
+
+<div class="panel hidden" id="panel-jobs">
+  <div class="job-list" id="jobList"></div>
+</div>
+
+<div class="warnings hidden" id="warningsPanel">
+  <strong>⚠️ Warnings</strong>
+  <ul id="warningsList"></ul>
+</div>
+
+</div>
+
+<script>
+// Station short names for CSS classes
+const STATION_CLASS = {
+  'Engineering': 'Engineering',
+  'Panel Processing': 'Panel',
+  'Benchwork': 'Benchwork',
+  'Pre Fin Cab Assembly': 'PreFin',
+  'Post Fin Cab Assembly': 'PostFin',
+  'Pack & Ship': 'PackShip',
+  'Delivery': 'Delivery',
+};
+
+const CREW_ORDER = ['Chris', 'Jonathan', 'Paisios', 'Ian', 'Spencer', 'Ken', 'Bob', 'Rob'];
+
+let plan = null;
+
+document.getElementById('fileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  try {
+    plan = JSON.parse(text);
+    render();
+  } catch (err) {
+    alert('Failed to parse JSON: ' + err.message);
+  }
+});
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'));
+    document.getElementById('panel-' + tab.dataset.tab).classList.remove('hidden');
+  });
+});
+
+function render() {
+  document.getElementById('loader').classList.add('hidden');
+  document.getElementById('content').classList.remove('hidden');
+  document.getElementById('planMeta').textContent = `Plan generated: ${plan.generatedAt} — ${plan.jobsScheduled} jobs, ${plan.totalPlacements} placements`;
+
+  renderStats();
+  renderHeatmap();
+  renderGantt();
+  renderJobs();
+  renderWarnings();
+}
+
+function renderStats() {
+  const stats = document.getElementById('stats');
+  const grid = plan.capacityGrid;
+  let totalOver = 0;
+  let overWeeks = 0;
+  let totalHrs = 0;
+  for (const crew of Object.keys(grid)) {
+    for (const wk of Object.keys(grid[crew])) {
+      const d = grid[crew][wk];
+      totalHrs += d.committed;
+      if (d.over > 0) { totalOver += d.over; overWeeks++; }
+    }
+  }
+  stats.innerHTML = `
+    <div class="stat"><div class="label">Jobs Scheduled</div><div class="value">${plan.jobsScheduled}</div></div>
+    <div class="stat"><div class="label">Total Placements</div><div class="value">${plan.totalPlacements}</div></div>
+    <div class="stat"><div class="label">Total Hours</div><div class="value">${totalHrs.toFixed(0)}</div></div>
+    <div class="stat ${overWeeks > 0 ? 'warn' : ''}"><div class="label">Over-Cap Weeks</div><div class="value">${overWeeks}</div></div>
+    <div class="stat ${totalOver > 40 ? 'alert' : totalOver > 0 ? 'warn' : ''}"><div class="label">Total Overload (hrs)</div><div class="value">${totalOver.toFixed(1)}</div></div>
+    <div class="stat ${plan.warnings.length > 0 ? 'warn' : ''}"><div class="label">Warnings</div><div class="value">${plan.warnings.length}</div></div>
+  `;
+}
+
+function renderHeatmap() {
+  const grid = plan.capacityGrid;
+  const weeks = new Set();
+  for (const crew of Object.keys(grid)) {
+    for (const wk of Object.keys(grid[crew])) weeks.add(wk);
+  }
+  const sortedWeeks = Array.from(weeks).sort();
+
+  const crewList = CREW_ORDER.filter(c => grid[c]);
+
+  let html = '<thead><tr><th class="crew-col">Crew</th>';
+  for (const wk of sortedWeeks) {
+    const d = new Date(wk + 'T00:00:00Z');
+    const label = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+    html += `<th>${label}</th>`;
+  }
+  html += '</tr></thead><tbody>';
+
+  for (const crew of crewList) {
+    html += `<tr><td class="crew-name">${crew}</td>`;
+    for (const wk of sortedWeeks) {
+      const d = grid[crew][wk];
+      if (!d) { html += '<td class="cell cell-empty"></td>'; continue; }
+      const avail = d.avail;
+      const committed = d.committed;
+      const pct = avail > 0 ? (committed / avail * 100) : 0;
+      let cls = 'cell-empty';
+      if (committed > 0) {
+        if (pct > 130) cls = 'cell-crit';
+        else if (pct > 100) cls = 'cell-over';
+        else if (pct > 80) cls = 'cell-high';
+        else if (pct > 50) cls = 'cell-med';
+        else cls = 'cell-low';
+      }
+      const cellContent = avail === 0 && committed === 0
+        ? '—'
+        : `${committed.toFixed(1)}<span class="cell-info">/ ${avail}</span>`;
+      html += `<td class="cell ${cls}" data-crew="${crew}" data-week="${wk}">${cellContent}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody>';
+  document.getElementById('heatmapTable').innerHTML = html;
+
+  // Cell click → detail
+  document.querySelectorAll('#heatmapTable td.cell').forEach(cell => {
+    cell.addEventListener('click', () => {
+      const crew = cell.dataset.crew;
+      const wk = cell.dataset.week;
+      showHeatmapDetail(crew, wk);
+    });
+  });
+}
+
+function showHeatmapDetail(crew, wk) {
+  const placements = plan.placements.filter(p => p.crew === crew && p.week === wk);
+  const panel = document.getElementById('heatmapDetail');
+  const d = plan.capacityGrid[crew]?.[wk] || {};
+  let html = `<h3>${crew} — Week of ${wk}</h3>`;
+  html += `<div style="font-size: 12px; color: #666; margin-bottom: 8px;">Available: ${d.avail || 0} hrs · Committed: ${d.committed?.toFixed(1) || 0} hrs · Over: ${d.over?.toFixed(1) || 0} hrs</div>`;
+  if (placements.length === 0) {
+    html += '<em>No placements this week (or all pre-existing, not in plan delta)</em>';
+  } else {
+    html += '<table><thead><tr><th>Job</th><th>Station</th><th>Hours</th></tr></thead><tbody>';
+    for (const p of placements) {
+      html += `<tr><td>${p.jobName}</td><td>${p.station}</td><td>${p.hours.toFixed(1)}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  panel.innerHTML = html;
+  panel.classList.remove('hidden');
+}
+
+function renderGantt() {
+  const placements = plan.placements;
+  // Group by job
+  const jobsMap = new Map();
+  for (const p of placements) {
+    if (!jobsMap.has(p.jobName)) jobsMap.set(p.jobName, []);
+    jobsMap.get(p.jobName).push(p);
+  }
+
+  // Collect weeks from placements
+  const allWeeks = new Set();
+  for (const p of placements) allWeeks.add(p.week);
+  const weeks = Array.from(allWeeks).sort();
+
+  let html = '<div class="gantt-header"><div class="gantt-job-col">Job</div><div class="gantt-weeks">';
+  for (const wk of weeks) {
+    const d = new Date(wk + 'T00:00:00Z');
+    html += `<div class="gantt-week">${d.getUTCMonth() + 1}/${d.getUTCDate()}</div>`;
+  }
+  html += '</div></div>';
+
+  // Sort jobs by earliest week, then by name
+  const jobEntries = Array.from(jobsMap.entries()).map(([name, ps]) => {
+    const earliest = ps.map(p => p.week).sort()[0];
+    return { name, earliest, placements: ps };
+  }).sort((a, b) => a.earliest.localeCompare(b.earliest) || a.name.localeCompare(b.name));
+
+  for (const { name, placements: ps } of jobEntries) {
+    html += '<div class="gantt-row">';
+    html += `<div class="gantt-job-name" title="${name}">${name}</div>`;
+    html += '<div class="gantt-track">';
+    for (const wk of weeks) {
+      html += '<div class="gantt-cell">';
+      const onThisWeek = ps.filter(p => p.week === wk);
+      // Stack multiple stations on same week
+      let topOffset = 0;
+      for (const p of onThisWeek) {
+        const stClass = STATION_CLASS[p.station] || 'Panel';
+        const label = `${p.station.split(' ')[0]} ${p.hours.toFixed(0)}h ${p.crew}`;
+        html += `<div class="gantt-bar station-${stClass}" style="top: ${topOffset + 4}px; left: 2px; right: 2px;" title="${p.station} — ${p.hours} hrs — ${p.crew} (${wk})">${label}</div>`;
+        topOffset += 18;
+      }
+      html += '</div>';
+    }
+    html += '</div></div>';
+  }
+
+  document.getElementById('ganttChart').innerHTML = html;
+}
+
+function renderJobs() {
+  const placements = plan.placements;
+  const jobsMap = new Map();
+  for (const p of placements) {
+    if (!jobsMap.has(p.jobName)) jobsMap.set(p.jobName, { placements: [], masterPmId: p.masterPmId });
+    jobsMap.get(p.jobName).placements.push(p);
+  }
+
+  let html = '';
+  for (const [name, info] of jobsMap.entries()) {
+    const earliest = info.placements.map(p => p.week).sort()[0];
+    const latest = info.placements.map(p => p.week).sort().reverse()[0];
+    const totalHrs = info.placements.reduce((s, p) => s + p.hours, 0);
+    const stations = {};
+    for (const p of info.placements) {
+      if (!stations[p.station]) stations[p.station] = 0;
+      stations[p.station] += p.hours;
+    }
+
+    html += `<div class="job-card">`;
+    html += `<h4>${name}</h4>`;
+    html += `<div class="meta">Window: ${earliest} → ${latest} · ${totalHrs.toFixed(1)} hrs · ${info.placements.length} placements</div>`;
+    html += '<div class="stations">';
+    for (const [station, hrs] of Object.entries(stations)) {
+      const stClass = STATION_CLASS[station] || 'Panel';
+      html += `<span class="station-chip station-${stClass}">${station.split(' ')[0]} ${hrs.toFixed(1)}h</span>`;
+    }
+    html += '</div></div>';
+  }
+
+  document.getElementById('jobList').innerHTML = html;
+}
+
+function renderWarnings() {
+  const panel = document.getElementById('warningsPanel');
+  const list = document.getElementById('warningsList');
+  if (!plan.warnings || plan.warnings.length === 0) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  list.innerHTML = plan.warnings.map(w => `<li>${w}</li>`).join('');
+}
+</script>
+
+</body>
+</html>
