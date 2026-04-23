@@ -1,0 +1,95 @@
+{
+  "description": "Manual overrides for the rebalance-schedule.js planner. Hand-maintained to capture state the monday.com boards don't track: partial completion, field work, subcontractor hours, job-specific scheduling rules.",
+  "jobOverrides": {
+    "11693156502": {
+      "name": "F&B - Westridge Office",
+      "note": "In flight — Engineering + Panel + Bench complete. Only Post Fin + Pack/Deliver remain.",
+      "remainingHours": { "eng": 0, "panel": 0, "bench": 0, "prefin": 0, "postfin": 8.6 }
+    },
+    "11693170191": {
+      "name": "SH - McMorris",
+      "note": "Eng done, Panel 90% done, Bench done, Pre Fin 22 of 55 cabs done",
+      "remainingHours": { "eng": 0, "panel": 2.4, "bench": 0, "prefin": 54.2, "postfin": 37 }
+    },
+    "11693176301": {
+      "name": "MAP - Edge Optics",
+      "note": "15 hrs Eng remaining (CU-related), rest untouched",
+      "remainingHours": { "eng": 15, "panel": 13, "bench": 49.9, "prefin": 0, "postfin": 6.8 }
+    },
+    "11693198809": {
+      "name": "NC - Cator Ruma",
+      "note": "Countertop-only. Delivery pushed to 5/08. Ian 8hr Fri 4/24 head-start + Ken CNC + edgebanding subcontractor.",
+      "remainingHours": { "eng": 0, "panel": 40, "bench": 0, "prefin": 0, "postfin": 0 },
+      "customWindow": { "panel": { "start": "2026-04-27", "end": "2026-05-01" } }
+    },
+    "11693164385": {
+      "name": "MAG - SciTech",
+      "note": "Eng done, Panel 75% box done (but 0 countertop), Bench 0, Post Fin 75% box (but 0 countertop install)",
+      "remainingHours": { "eng": 0, "panel": 9, "bench": 2.3, "prefin": 0, "postfin": 8.25 }
+    },
+    "11693186870": {
+      "name": "MAG - Roster 5 — Frameless (P1)",
+      "note": "5 hrs Eng remaining. No bench (P-Lam). Delivery 5/27.",
+      "remainingHours": { "eng": 5, "panel": 33.9, "bench": 0, "prefin": 0, "postfin": 40 }
+    },
+    "11693187209": {
+      "name": "Gilbert - Dining Room & Range Hood",
+      "note": "Eng done. Delivery pushed to 5/22.",
+      "remainingHours": { "eng": 0, "panel": 3.3, "bench": 1, "prefin": 8.9, "postfin": 2 }
+    },
+    "11693164567": {
+      "name": "Liz Stapp - Laundry Room",
+      "note": "Full job.",
+      "remainingHours": null
+    },
+    "11693166446": {
+      "name": "SHI - Huntington Hills",
+      "note": "Eng done. Delivery pushed to 6/01.",
+      "remainingHours": { "eng": 0, "panel": 1.6, "bench": 0.2, "prefin": 3.2, "postfin": 1 }
+    },
+    "11693177783": {
+      "name": "F&B - Quince Ave",
+      "note": "Full job.",
+      "remainingHours": null
+    },
+    "11693166564": {
+      "name": "MAG - BCH",
+      "note": "6 hrs Eng remaining. Delivery pushed to 5/20.",
+      "remainingHours": { "eng": 6, "panel": 15, "bench": 36, "prefin": 2, "postfin": 10.4 }
+    },
+    "11693186985": {
+      "name": "MAG - Atom Computing",
+      "note": "1 hr Eng remaining.",
+      "remainingHours": { "eng": 1, "panel": 4, "bench": 0.5, "prefin": 0, "postfin": 3.1 }
+    },
+    "11693166519": {
+      "name": "VV - Wrangler Way",
+      "note": "Full job. Plenty of runway.",
+      "remainingHours": null
+    },
+    "11835189937": {
+      "name": "MAG - Roster 5 — Custom Units (P2)",
+      "note": "40 hrs Eng remaining. CU bench 126 (no boxes). Post Fin 16 for one piece. Can run Post Fin parallel with tail-end of bench.",
+      "remainingHours": { "eng": 40, "panel": 22, "bench": 126, "prefin": 0, "postfin": 16 },
+      "parallelPostFin": true
+    }
+  },
+  "crewCapacityOverrides": {
+    "2026-04-27": {
+      "Ian": { "available": 0, "reason": "Field work — warranty/punch 4/27-5/1" },
+      "Paisios": { "available": 0, "reason": "Paternity leave 4/27-5/8" },
+      "Jonathan": { "weekendHours": 16, "reason": "Sat-Sun Cator Ruma edgebanding" }
+    },
+    "2026-05-04": {
+      "Paisios": { "available": 0, "reason": "Paternity leave 4/27-5/8" }
+    }
+  },
+  "subcontractors": {
+    "2026-04-27": [
+      { "name": "Bob-subcontract", "hours": 24, "allowedStations": ["Panel Processing", "Benchwork"], "reason": "Bob available Mon-Wed as subcontractor before 5/18 employee start" },
+      { "name": "Edgeband-subcontractor", "hours": 32, "allowedStations": ["Panel Processing"], "assignedJobId": "11693198809", "reason": "Cator Ruma edgebanding specialist" }
+    ]
+  },
+  "skipJobs": [],
+  "notes": "Edit this file between --plan runs to reflect reality. Planner reads it fresh each run."
+}

@@ -29,6 +29,29 @@ if (!TOKEN) {
 
 const MODE = process.argv.includes('--execute') ? 'execute' : 'plan';
 
+// ============================================================================
+// LOAD OVERRIDES CONFIG
+// ============================================================================
+
+const OVERRIDES_PATH = path.join(__dirname, '..', 'config', 'rebalance-overrides.json');
+let OVERRIDES = {
+  jobOverrides: {},
+  crewCapacityOverrides: {},
+  subcontractors: {},
+  skipJobs: [],
+};
+if (fs.existsSync(OVERRIDES_PATH)) {
+  try {
+    OVERRIDES = JSON.parse(fs.readFileSync(OVERRIDES_PATH, 'utf8'));
+    console.log(`Loaded overrides from ${OVERRIDES_PATH}`);
+  } catch (e) {
+    console.error(`Failed to parse ${OVERRIDES_PATH}: ${e.message}`);
+    process.exit(1);
+  }
+} else {
+  console.log(`No overrides file at ${OVERRIDES_PATH} — running with defaults`);
+}
+
 // Board IDs
 const BOARD_PL = 18407601557;          // Production Load
 const BOARD_MASTER_PM = 9820786641;    // Master PM
@@ -313,6 +336,23 @@ async function loadJobs() {
     const cv = {};
     for (const v of it.column_values) cv[v.id] = v;
     const pLamChecked = cv[COL_PL.pLam]?.value && JSON.parse(cv[COL_PL.pLam].value).checked;
+
+    // Apply job overrides from config
+    const override = OVERRIDES.jobOverrides?.[it.id] || {};
+
+    const formulaHours = {
+      eng: parseFloat(cv[COL_PL.eng]?.display_value || '0'),
+      panel: parseFloat(cv[COL_PL.panel]?.display_value || '0'),
+      bench: parseFloat(cv[COL_PL.bench]?.display_value || '0'),
+      prefin: parseFloat(cv[COL_PL.prefin]?.display_value || '0'),
+      postfin: parseFloat(cv[COL_PL.postfin]?.display_value || '0'),
+    };
+
+    // If override specifies remainingHours, use those; null means "use formula as-is (full job)"
+    const hours = override.remainingHours && override.remainingHours !== null
+      ? override.remainingHours
+      : formulaHours;
+
     return {
       id: it.id,
       name: it.name,
@@ -320,16 +360,14 @@ async function loadJobs() {
       subtype: cv[COL_PL.subtype]?.text || 'Commercial',
       delivery: cv[COL_PL.delivery]?.display_value || null,
       masterPmId: cv[COL_PL.masterPmLink]?.linked_item_ids?.[0] || null,
-      hours: {
-        eng: parseFloat(cv[COL_PL.eng]?.display_value || '0'),
-        panel: parseFloat(cv[COL_PL.panel]?.display_value || '0'),
-        bench: parseFloat(cv[COL_PL.bench]?.display_value || '0'),
-        prefin: parseFloat(cv[COL_PL.prefin]?.display_value || '0'),
-        postfin: parseFloat(cv[COL_PL.postfin]?.display_value || '0'),
-      },
+      hours,
+      formulaHours,
       finishingDays: parseInt(cv[COL_PL.finishingDays]?.text || '0'),
       pLam: pLamChecked,
       notes: cv[COL_PL.productionNotes]?.text || '',
+      customWindow: override.customWindow || null,
+      parallelPostFin: override.parallelPostFin || false,
+      overrideNote: override.note || null,
     };
   });
 }
@@ -459,8 +497,8 @@ async function loadSubitems() {
 // CAPACITY MODEL
 // ============================================================================
 
-function buildCapacityGrid(crewParents, timeOffList, weeks) {
-  // grid[crew][week] = { base, available, committed, jobs: [] }
+function buildCapacityGrid(crewParents, timeOffList, weeks, existingSubs, activeJobMasterPmIds) {
+  // grid[crew][week] = { parentId, base, timeOff, available, committed, assignments }
   const grid = {};
   for (const crew of Object.keys(CREW_BASE_HOURS)) {
     grid[crew] = {};
@@ -486,11 +524,10 @@ function buildCapacityGrid(crewParents, timeOffList, weeks) {
     }
   }
 
-  // Apply time off from Time Off board (in case rollup hasn't run)
+  // Apply time off from Time Off board (redundant guard in case rollup lagged)
   for (const to of timeOffList) {
     const personName = Object.keys(CREW_PERSON_ID).find(k => CREW_PERSON_ID[k] === to.personId);
     if (!personName || !grid[personName]) continue;
-    // Find all weeks touched by this TO range
     const from = parseISO(to.from);
     const to_ = parseISO(to.to);
     let d = from;
@@ -499,12 +536,9 @@ function buildCapacityGrid(crewParents, timeOffList, weeks) {
       if (dow !== 0 && dow !== 6) {
         const wkStart = toISO(getMondayOfWeek(d));
         if (grid[personName][wkStart]) {
-          // Don't double count if rollup already added
           const entry = grid[personName][wkStart];
-          const existingAvail = entry.available;
-          const baseExpected = entry.base - 8; // single day
-          if (existingAvail > baseExpected) {
-            // Rollup hasn't applied — apply manually
+          const expectedBaseAfterThisDay = entry.base - 8;
+          if (entry.available > expectedBaseAfterThisDay) {
             entry.available = Math.max(0, entry.available - 8);
             entry.timeOff += 8;
           }
@@ -514,11 +548,44 @@ function buildCapacityGrid(crewParents, timeOffList, weeks) {
     }
   }
 
-  // Bob isn't available as an employee before BOB_START_DATE
+  // Bob pre-5/18 is subcontract-only, not salaried
   for (const wk of weeks) {
     if (wk < BOB_START_DATE) {
       grid.Bob[wk].available = 0;
       grid.Bob[wk].base = 0;
+    }
+  }
+
+  // PATCH A: Pre-load ONLY subitems from jobs NOT being rescheduled
+  // (subitems for active jobs will be deleted, so don't count their load)
+  for (const sub of existingSubs) {
+    if (activeJobMasterPmIds.has(sub.masterPmId)) continue;  // skip — will be deleted
+    if (!sub.parentCrew || !sub.parentWeek) continue;
+    const slot = grid[sub.parentCrew]?.[sub.parentWeek];
+    if (!slot) continue;
+    slot.committed += sub.hours;
+    slot.assignments.push({
+      job: sub.name.split(' — ')[0],
+      station: sub.station,
+      hours: sub.hours,
+      preExisting: true,
+    });
+  }
+
+  // PATCH D: Apply crewCapacityOverrides
+  for (const [week, crewMap] of Object.entries(OVERRIDES.crewCapacityOverrides || {})) {
+    for (const [crew, override] of Object.entries(crewMap)) {
+      const slot = grid[crew]?.[week];
+      if (!slot) continue;
+      if (override.available !== undefined) {
+        slot.available = override.available;
+        slot.overrideReason = override.reason;
+      }
+      if (override.weekendHours !== undefined) {
+        slot.available += override.weekendHours;
+        slot.weekendBoost = override.weekendHours;
+        slot.weekendReason = override.reason;
+      }
     }
   }
 
@@ -563,56 +630,103 @@ function computeWindows(job) {
     packShip: { start: deliveryWeek, end: toISO(addDays(parseISO(deliveryWeek), 4)) },
   };
 
-  // Post Fin
-  const postfinWeeks = weeksCountForHours(job.hours.postfin);
-  const postfinEnd = deliveryWeek;
-  const postfinStart = toISO(addDays(parseISO(postfinEnd), -7 * (postfinWeeks - 1)));
+  // PATCH C: For each station, apply customWindow override if provided; else compute
+  // Work backwards, but SKIP stations with 0 hours entirely (no window assigned)
+
+  // Post Fin (final assembly station before pack/ship)
+  let postfinEndWeek = deliveryWeek;
   if (job.hours.postfin > 0) {
-    windows.postfin = { start: postfinStart, end: toISO(addDays(parseISO(postfinEnd), 4)) };
+    if (job.customWindow?.postfin) {
+      windows.postfin = job.customWindow.postfin;
+      postfinEndWeek = windows.postfin.start;
+    } else {
+      const postfinWeeks = weeksCountForHours(job.hours.postfin);
+      const postfinStart = toISO(addDays(parseISO(postfinEndWeek), -7 * (postfinWeeks - 1)));
+      windows.postfin = { start: postfinStart, end: toISO(addDays(parseISO(postfinEndWeek), 4)) };
+    }
   }
 
-  // Finish cycle
+  // Finish cycle (only if Finishing Days > 0 and not P-Lam)
   let finishDrop = null, finishReturn = null;
   if (job.finishingDays > 0 && !job.pLam) {
-    finishReturn = toISO(addDays(parseISO(postfinStart || deliveryWeek), 4)); // Friday of Post Fin first week
+    const finishReturnRef = job.hours.postfin > 0 ? (windows.postfin?.start || deliveryWeek) : deliveryWeek;
+    finishReturn = toISO(addDays(parseISO(finishReturnRef), 4));
     finishDrop = businessDaysBack(finishReturn, job.finishingDays);
     windows.finishDrop = finishDrop;
     windows.finishReturn = finishReturn;
   }
 
-  // Pre Fin (ends Friday before finish drop, or right before Post Fin if no finishing)
-  const prefinEndTarget = finishDrop
-    ? toISO(addDays(parseISO(finishDrop), -1))
-    : toISO(addDays(parseISO(postfinStart || deliveryWeek), -3));
-  const prefinEndWeek = toISO(getMondayOfWeek(parseISO(prefinEndTarget)));
-  const prefinWeeks = weeksCountForHours(job.hours.prefin);
-  const prefinStart = toISO(addDays(parseISO(prefinEndWeek), -7 * (prefinWeeks - 1)));
+  // Pre Fin (skip if 0 hrs)
+  let prefinStartWeek = null;
   if (job.hours.prefin > 0) {
-    windows.prefin = { start: prefinStart, end: toISO(addDays(parseISO(prefinEndWeek), 4)) };
+    if (job.customWindow?.prefin) {
+      windows.prefin = job.customWindow.prefin;
+      prefinStartWeek = windows.prefin.start;
+    } else {
+      const prefinEndTarget = finishDrop
+        ? toISO(addDays(parseISO(finishDrop), -1))
+        : (job.hours.postfin > 0
+            ? toISO(addDays(parseISO(windows.postfin.start), -3))
+            : toISO(addDays(parseISO(deliveryWeek), -3)));
+      const prefinEndWeek = toISO(getMondayOfWeek(parseISO(prefinEndTarget)));
+      const prefinWeeks = weeksCountForHours(job.hours.prefin);
+      prefinStartWeek = toISO(addDays(parseISO(prefinEndWeek), -7 * (prefinWeeks - 1)));
+      windows.prefin = { start: prefinStartWeek, end: toISO(addDays(parseISO(prefinEndWeek), 4)) };
+    }
   }
 
-  // Benchwork (concurrent with Pre Fin)
-  const benchEndWeek = prefinEndWeek;
-  const benchWeeks = weeksCountForHours(job.hours.bench);
-  const benchStart = toISO(addDays(parseISO(benchEndWeek), -7 * (benchWeeks - 1)));
+  // Benchwork (skip if 0 hrs); concurrent with Pre Fin if both exist
+  let benchStartWeek = null;
   if (job.hours.bench > 0) {
-    windows.bench = { start: benchStart, end: toISO(addDays(parseISO(benchEndWeek), 4)) };
+    if (job.customWindow?.bench) {
+      windows.bench = job.customWindow.bench;
+      benchStartWeek = windows.bench.start;
+    } else {
+      const benchEndRef = prefinStartWeek
+        ? toISO(addDays(parseISO(windows.prefin.end), 0))
+        : (finishDrop
+            ? toISO(addDays(parseISO(finishDrop), -1))
+            : (job.hours.postfin > 0
+                ? toISO(addDays(parseISO(windows.postfin.start), -3))
+                : toISO(addDays(parseISO(deliveryWeek), -3))));
+      const benchEndWeek = toISO(getMondayOfWeek(parseISO(benchEndRef)));
+      const benchWeeks = weeksCountForHours(job.hours.bench);
+      benchStartWeek = toISO(addDays(parseISO(benchEndWeek), -7 * (benchWeeks - 1)));
+      windows.bench = { start: benchStartWeek, end: toISO(addDays(parseISO(benchEndWeek), 4)) };
+    }
   }
 
-  // Panel Processing (before Bench)
-  const panelEndWeek = toISO(addDays(parseISO(benchStart || prefinStart || deliveryWeek), -7));
-  const panelWeeks = weeksCountForHours(job.hours.panel);
-  const panelStart = toISO(addDays(parseISO(panelEndWeek), -7 * (panelWeeks - 1)));
+  // Panel Processing (skip if 0 hrs)
+  let panelStartWeek = null;
   if (job.hours.panel > 0) {
-    windows.panel = { start: panelStart, end: toISO(addDays(parseISO(panelEndWeek), 4)) };
+    if (job.customWindow?.panel) {
+      windows.panel = job.customWindow.panel;
+      panelStartWeek = windows.panel.start;
+    } else {
+      // Ends one week before the earliest of bench/prefin/postfin; or lands IN delivery week for countertop-only
+      const refStartArr = [benchStartWeek, prefinStartWeek, windows.postfin?.start].filter(Boolean);
+      const panelEndWeek = refStartArr.length > 0
+        ? toISO(addDays(parseISO(refStartArr.sort()[0]), -7))  // one week before earliest downstream station
+        : deliveryWeek;  // no downstream stations → Panel lands same week as delivery (Cator Ruma case)
+      const panelWeeks = weeksCountForHours(job.hours.panel);
+      panelStartWeek = toISO(addDays(parseISO(panelEndWeek), -7 * (panelWeeks - 1)));
+      windows.panel = { start: panelStartWeek, end: toISO(addDays(parseISO(panelEndWeek), 4)) };
+    }
   }
 
-  // Engineering (before Panel)
-  const engEndWeek = toISO(addDays(parseISO(panelStart || deliveryWeek), -7));
-  const engWeeks = weeksCountForHours(job.hours.eng);
-  const engStart = toISO(addDays(parseISO(engEndWeek), -7 * (engWeeks - 1)));
+  // Engineering (skip if 0 hrs); ends one week before Panel, or before earliest downstream station
   if (job.hours.eng > 0) {
-    windows.eng = { start: engStart, end: toISO(addDays(parseISO(engEndWeek), 4)) };
+    if (job.customWindow?.eng) {
+      windows.eng = job.customWindow.eng;
+    } else {
+      const refStartArr = [panelStartWeek, benchStartWeek, prefinStartWeek, windows.postfin?.start].filter(Boolean);
+      const engEndWeek = refStartArr.length > 0
+        ? toISO(addDays(parseISO(refStartArr.sort()[0]), -7))
+        : deliveryWeek;
+      const engWeeks = weeksCountForHours(job.hours.eng);
+      const engStartWeek = toISO(addDays(parseISO(engEndWeek), -7 * (engWeeks - 1)));
+      windows.eng = { start: engStartWeek, end: toISO(addDays(parseISO(engEndWeek), 4)) };
+    }
   }
 
   return windows;
@@ -713,6 +827,13 @@ async function plan() {
 
   console.log(`Loaded: ${jobs.length} jobs, ${crewParents.length} crew-week parents, ${timeOff.length} time off entries, ${existingSubs.length} existing subitems`);
 
+  // Report which overrides are active
+  const overrideCount = Object.keys(OVERRIDES.jobOverrides || {}).length;
+  const capacityOverrideWeeks = Object.keys(OVERRIDES.crewCapacityOverrides || {}).length;
+  if (overrideCount > 0 || capacityOverrideWeeks > 0) {
+    console.log(`Applying ${overrideCount} job override(s), ${capacityOverrideWeeks} capacity override week(s)`);
+  }
+
   // Filter to active jobs (Not Started or Scheduled)
   const activeJobs = jobs.filter(j => ['Not Started', 'Scheduled', 'Ready to Schedule', 'Finishing'].includes(j.status));
   console.log(`Active jobs to schedule: ${activeJobs.length}`);
@@ -726,12 +847,19 @@ async function plan() {
   const endWeek = '2026-07-27';
   const weeks = getWeekList(startWeek, endWeek);
 
-  const grid = buildCapacityGrid(crewParents, timeOff, weeks);
+  // Build set of Master PM IDs for active jobs (their subitems will be deleted/rescheduled)
+  const activeJobMasterPmIds = new Set(activeJobs.map(j => j.masterPmId).filter(Boolean));
+  const grid = buildCapacityGrid(crewParents, timeOff, weeks, existingSubs, activeJobMasterPmIds);
 
   const allPlacements = [];
   const warnings = [];
 
   for (const job of activeJobs) {
+    // PATCH D: skip jobs in the skipJobs list
+    if (OVERRIDES.skipJobs?.includes(job.id)) {
+      console.log(`Skipping ${job.name} per overrides.skipJobs`);
+      continue;
+    }
     if (!job.delivery) {
       warnings.push(`Job ${job.name} has no delivery date — skipping`);
       continue;
