@@ -524,27 +524,37 @@ function buildCapacityGrid(crewParents, timeOffList, weeks, existingSubs, active
     }
   }
 
-  // Apply time off from Time Off board (redundant guard in case rollup lagged)
+  // PATCH 2: Apply time off from Time Off board.
+  // Compute total weekday hours per (person, week) across ALL approved TO entries,
+  // then take MAX(rollup-derived timeOff, computed timeOff) so multi-day ranges
+  // and multi-week ranges are respected without double-counting the rollup.
+  const computedTimeOff = {};  // { personName: { week: hours } }
   for (const to of timeOffList) {
     const personName = Object.keys(CREW_PERSON_ID).find(k => CREW_PERSON_ID[k] === to.personId);
-    if (!personName || !grid[personName]) continue;
-    const from = parseISO(to.from);
-    const to_ = parseISO(to.to);
-    let d = from;
-    while (d <= to_) {
+    if (!personName) continue;
+    if (!to.from || !to.to) continue;
+    let d = parseISO(to.from);
+    const end = parseISO(to.to);
+    while (d <= end) {
       const dow = d.getUTCDay();
       if (dow !== 0 && dow !== 6) {
         const wkStart = toISO(getMondayOfWeek(d));
-        if (grid[personName][wkStart]) {
-          const entry = grid[personName][wkStart];
-          const expectedBaseAfterThisDay = entry.base - 8;
-          if (entry.available > expectedBaseAfterThisDay) {
-            entry.available = Math.max(0, entry.available - 8);
-            entry.timeOff += 8;
-          }
-        }
+        if (!computedTimeOff[personName]) computedTimeOff[personName] = {};
+        computedTimeOff[personName][wkStart] = (computedTimeOff[personName][wkStart] || 0) + 8;
       }
       d = addDays(d, 1);
+    }
+  }
+  for (const [personName, weekMap] of Object.entries(computedTimeOff)) {
+    for (const [wk, hrs] of Object.entries(weekMap)) {
+      const entry = grid[personName]?.[wk];
+      if (!entry) continue;
+      // Only apply the delta beyond what the rollup already deducted
+      if (hrs > entry.timeOff) {
+        const delta = hrs - entry.timeOff;
+        entry.available = Math.max(0, entry.available - delta);
+        entry.timeOff = hrs;
+      }
     }
   }
 
@@ -966,10 +976,12 @@ async function plan() {
     for (const wk of weeks) {
       const slot = grid[crew][wk];
       if (!slot) continue;  // subcontractor virtual-crew rows only exist on one week
-      if (slot.committed > 0 || slot.available > 0) {
+      // Include the cell if there's work, capacity, OR PTO that zeroed it out
+      if (slot.committed > 0 || slot.available > 0 || slot.timeOff > 0) {
         report.capacityGrid[crew][wk] = {
           avail: slot.available,
           committed: Number(slot.committed.toFixed(2)),
+          timeOff: slot.timeOff || 0,
           over: slot.committed > slot.available * SOFT_CAP_MULTIPLIER
             ? Number((slot.committed - slot.available).toFixed(2))
             : 0,
