@@ -294,6 +294,18 @@ function businessDaysBack(dateStr, days) {
   return toISO(d);
 }
 
+// Forward counterpart: advance N weekdays (skip Sat/Sun) from startDate
+function addBusinessDays(dateStr, days) {
+  let d = parseISO(dateStr);
+  let remaining = days;
+  while (remaining > 0) {
+    d = addDays(d, 1);
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6) remaining--;
+  }
+  return toISO(d);
+}
+
 // Get array of Monday dates in the planning window
 function getWeekList(startISO, endISO) {
   const weeks = [];
@@ -711,11 +723,15 @@ function computeWindows(job) {
   }
 
   // Finish cycle (only if Finishing Days > 0 and not P-Lam)
+  // Anchor: Friday of Post Fin first week (preserves existing window placement).
+  // Drop = N business days back from anchor; Return = Drop + N business days
+  // (forward business-day arithmetic per spec — equals anchor by inverse property).
   let finishDrop = null, finishReturn = null;
   if (job.finishingDays > 0 && !job.pLam) {
     const finishReturnRef = job.hours.postfin > 0 ? (windows.postfin?.start || deliveryWeek) : deliveryWeek;
-    finishReturn = toISO(addDays(parseISO(finishReturnRef), 4));
-    finishDrop = businessDaysBack(finishReturn, job.finishingDays);
+    const provisionalReturn = toISO(addDays(parseISO(finishReturnRef), 4));
+    finishDrop = businessDaysBack(provisionalReturn, job.finishingDays);
+    finishReturn = addBusinessDays(finishDrop, job.finishingDays);
     windows.finishDrop = finishDrop;
     windows.finishReturn = finishReturn;
   }
