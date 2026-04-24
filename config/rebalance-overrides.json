@@ -90,10 +90,10 @@
       { "name": "Edgeband-subcontractor", "hours": 32, "allowedStations": ["Panel Processing"], "assignedJobId": "11693198809", "reason": "Cator Ruma edgebanding specialist" }
     ],
     "2026-05-11": [
-      { "name": "CU-Bench-sub-A", "hours": 32, "allowedStations": ["Benchwork"], "assignedJobId": "11835189937", "fallbackOnly": true, "reason": "R5-P2 CU bench overflow — Paisios excluded, Ian/Spencer at cap. Offer to Bob first (pre-employee subcontract); backup source available if declined." }
+      { "name": "CU-Bench-sub-A", "hours": 32, "allowedStations": ["Benchwork"], "assignedJobId": "11835189937", "reason": "R5-P2 CU bench — Bob is Secondary by strategic design (Shop Foreman teaching role), so sub absorbs by default to avoid Ian-only overload. Offer to Bob first; backup source available." }
     ],
     "2026-05-18": [
-      { "name": "CU-Bench-sub-B", "hours": 32, "allowedStations": ["Benchwork"], "assignedJobId": "11835189937", "fallbackOnly": true, "reason": "R5-P2 CU bench overflow continued. Offer to Bob first; backup source available." }
+      { "name": "CU-Bench-sub-B", "hours": 32, "allowedStations": ["Benchwork"], "assignedJobId": "11835189937", "reason": "R5-P2 CU bench continued — sub absorbs by default; specific Bob pairings handled via forceAssignments. Offer to Bob first; backup source available." }
     ],
     "2026-05-25": [
       { "name": "R5-P1-PostFin-sub", "hours": 24, "allowedStations": ["Post Fin Cab Assembly"], "assignedJobId": "11693186870", "fallbackOnly": true, "reason": "R5-P1 PostFin overflow — Ian PTO 5/25-5/29, delivery firm 5/27. Offer to Bob first; backup source available." }
@@ -106,5 +106,30 @@
       "reason": "CU-specific bench work — keep Paisios off Roster 5 P2"
     }
   },
+  "forceAssignments": [
+    {
+      "crew": "Chris",
+      "jobId": "11693198809",
+      "stations": ["Pack & Ship", "Delivery"],
+      "week": "2026-04-27",
+      "reason": "Chris covers Cator Ruma ship/deliver since Paisios is on paternity leave"
+    },
+    {
+      "crew": "Ian",
+      "jobId": "11693198809",
+      "stations": ["Panel Processing"],
+      "week": "2026-04-20",
+      "hours": 8,
+      "reason": "Ian Friday 4/24 head-start on Cator Ruma edgebanding"
+    },
+    {
+      "crew": "Bob",
+      "jobId": "11835189937",
+      "stations": ["Benchwork"],
+      "week": "2026-05-18",
+      "hours": 20,
+      "reason": "Pair Bob with Ian on CU bench during ramp; Bob is Shop Foreman and is intentionally Secondary to enable teaching — assigning CU bench here is part of that operating model"
+    }
+  ],
   "notes": "Edit this file between --plan runs to reflect reality. Planner reads it fresh each run."
 }

@@ -687,6 +687,67 @@ function jobExclusionViolation(crew, jobId) {
   return null;
 }
 
+// PATCH 4: forceAssignments — pinned (crew, jobId, stations[], week, hours?) placements
+function getForceAssignments(jobId, station, week) {
+  const matches = [];
+  for (const entry of OVERRIDES.forceAssignments || []) {
+    if (entry.jobId !== jobId) continue;
+    if (!entry.stations?.includes(station)) continue;
+    if (entry.week !== week) continue;
+    matches.push(entry);
+  }
+  return matches;
+}
+
+// Apply all matching forces for (job, station, week). Mutates grid.
+// Returns { placements, hoursConsumed, warnings }.
+// Throws if a force violates a hard rule (don't silently override hard rules).
+function applyForceAssignments(grid, job, station, week, weekHours) {
+  const placements = [];
+  const warnings = [];
+  let consumed = 0;
+  const matches = getForceAssignments(job.id, station, week);
+  for (const force of matches) {
+    const hrs = force.hours !== undefined
+      ? force.hours
+      : Math.max(0, weekHours - consumed);
+    if (hrs <= 0) continue;
+    const ruleHit = hardRuleViolation(force.crew, station, job.subtype, week);
+    if (ruleHit) {
+      throw new Error(`forceAssignment violates hard rule: ${force.crew} on ${station} ${week} for ${job.name} — ${ruleHit}`);
+    }
+    const slot = grid[force.crew]?.[week];
+    if (!slot) {
+      warnings.push(`forceAssignment skipped (${job.name} / ${station} ${week}): ${force.crew} has no grid entry`);
+      continue;
+    }
+    if (!slot.parentId && !slot.subcontractor) {
+      warnings.push(`forceAssignment skipped (${job.name} / ${station} ${week}): ${force.crew} has no allocation parent row`);
+      continue;
+    }
+    const wouldBe = slot.committed + hrs;
+    if (wouldBe > slot.available * SOFT_CAP_MULTIPLIER) {
+      warnings.push(`forceAssignment exceeds cap: ${force.crew} ${week} would be ${wouldBe.toFixed(1)}/${slot.available} (over by ${(wouldBe - slot.available).toFixed(1)} hrs) — placing anyway per user override`);
+    }
+    slot.committed = wouldBe;
+    slot.assignments.push({ job: job.name, station, hours: hrs, forced: true });
+    placements.push({
+      crew: force.crew,
+      week,
+      hours: Number(hrs.toFixed(2)),
+      parentId: slot.parentId,
+      station,
+      jobId: job.id,
+      jobName: job.name,
+      masterPmId: job.masterPmId,
+      forced: true,
+      forceReason: force.reason || null,
+    });
+    consumed += hrs;
+  }
+  return { placements, hoursConsumed: consumed, warnings };
+}
+
 function weeksCountForHours(hours) {
   if (hours <= 40) return 1;
   if (hours <= 80) return 2;
@@ -889,9 +950,17 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
   const perWeek = hours / weeks.length;
   const allPlacements = [];
   const allRejections = new Map();  // crew → reason (last reason wins; aggregated for warning)
+  const allWarnings = [];  // PATCH 4: forceAssignment warnings (cap exceeded, missing parent, etc.)
   let totalUnplaced = 0;
 
   for (const wk of weeks) {
+    // PATCH 4: Apply force assignments first; deduct from this week's share before normal routing
+    const forceResult = applyForceAssignments(grid, job, station, wk, perWeek);
+    allPlacements.push(...forceResult.placements);
+    for (const w of forceResult.warnings) allWarnings.push(w);
+    const remainingThisWeek = Math.max(0, perWeek - forceResult.hoursConsumed);
+    if (remainingThisWeek <= 0) continue;
+
     // PATCH 1 + fallbackOnly: Find subcontractor pools active this week, eligible for this station+job.
     // - assignedSubs: assignedJobId === job.id, NOT fallbackOnly → BEFORE primary
     // - generalSubs:  no assignedJobId, NOT fallbackOnly → AFTER secondary, BEFORE fallback
@@ -925,7 +994,7 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
 
     if (primariesAvailableThisWeek.length > 1) {
       // Split evenly among primaries; sub buckets flank each split in priority order
-      const perPrimary = perWeek / primariesAvailableThisWeek.length;
+      const perPrimary = remainingThisWeek / primariesAvailableThisWeek.length;
       for (const p of primariesAvailableThisWeek) {
         const others = [...candidates.filter(c => c !== p), ...generalSubs, ...fallbackSubs];
         const result = allocateStationWeek(grid, job, station, wk, perPrimary, [...assignedSubs, p, ...others]);
@@ -934,14 +1003,14 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
         for (const r of result.rejections || []) allRejections.set(r.crew, r.reason);
       }
     } else {
-      const result = allocateStationWeek(grid, job, station, wk, perWeek, candidatesForWk);
+      const result = allocateStationWeek(grid, job, station, wk, remainingThisWeek, candidatesForWk);
       allPlacements.push(...result.placements);
       totalUnplaced += result.unplaced;
       for (const r of result.rejections || []) allRejections.set(r.crew, r.reason);
     }
   }
 
-  return { placements: allPlacements, unplaced: totalUnplaced, rejections: allRejections };
+  return { placements: allPlacements, unplaced: totalUnplaced, rejections: allRejections, warnings: allWarnings };
 }
 
 // ============================================================================
@@ -1014,6 +1083,7 @@ async function plan() {
       if (!s.win || s.hours <= 0) continue;
       const result = scheduleStation(grid, job, s.name, s.hours, s.win.start, s.win.end);
       allPlacements.push(...result.placements);
+      for (const w of result.warnings || []) warnings.push(w);
       if (result.unplaced > 0) {
         let msg = `${job.name} / ${s.name}: ${result.unplaced} hrs could not be placed within window ${s.win.start} → ${s.win.end}`;
         if (result.rejections && result.rejections.size > 0) {
@@ -1027,9 +1097,16 @@ async function plan() {
     // Pack & Ship + Delivery (2 hrs each on Paisios, delivery week)
     for (const ps of ['Pack & Ship', 'Delivery']) {
       const wk = windows.packShip.start;
-      const result = allocateStationWeek(grid, job, ps, wk, 2, ['Paisios', 'Ian', 'Spencer', 'Bob', 'Jonathan']);
-      allPlacements.push(...result.placements);
-      if (result.unplaced > 0) warnings.push(`${job.name} / ${ps}: ${result.unplaced} hrs unplaced on ${wk}`);
+      // PATCH 4: Apply force assignments first, then route remainder normally
+      const forceResult = applyForceAssignments(grid, job, ps, wk, 2);
+      allPlacements.push(...forceResult.placements);
+      for (const w of forceResult.warnings) warnings.push(w);
+      const remaining = Math.max(0, 2 - forceResult.hoursConsumed);
+      if (remaining > 0) {
+        const result = allocateStationWeek(grid, job, ps, wk, remaining, ['Paisios', 'Ian', 'Spencer', 'Bob', 'Jonathan']);
+        allPlacements.push(...result.placements);
+        if (result.unplaced > 0) warnings.push(`${job.name} / ${ps}: ${result.unplaced} hrs unplaced on ${wk}`);
+      }
     }
   }
 
