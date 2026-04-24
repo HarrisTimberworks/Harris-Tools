@@ -211,13 +211,13 @@ const ROUTING = {
 const SECONDARY = {
   'Res - Face Frame': {
     'Benchwork':              ['Ian', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly':   ['Ian', 'Bob', 'Paisios', 'Ken'],  // Ken as last resort
+    'Pre Fin Cab Assembly':   ['Ian', 'Bob', 'Paisios'],  // Ken removed per matrix hard rule
     'Post Fin Cab Assembly':  ['Spencer', 'Paisios'],
     'Engineering':            ['Paisios', 'Jonathan'],
   },
   'Res - Frameless': {
     'Benchwork':              ['Spencer', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly':   ['Spencer', 'Bob', 'Paisios', 'Ken'],
+    'Pre Fin Cab Assembly':   ['Spencer', 'Bob', 'Paisios'],  // Ken removed per matrix hard rule
     'Post Fin Cab Assembly':  ['Spencer', 'Paisios'],
     'Panel Processing':       ['Ian', 'Bob'],
   },
@@ -234,7 +234,7 @@ const SECONDARY = {
   },
   'Mixed': {
     'Benchwork':              ['Ian', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly':   ['Ian', 'Bob', 'Paisios', 'Ken'],
+    'Pre Fin Cab Assembly':   ['Ian', 'Bob', 'Paisios'],  // Ken removed per matrix hard rule
     'Post Fin Cab Assembly':  ['Spencer', 'Paisios'],
     'Engineering':            ['Paisios', 'Jonathan'],
   },
@@ -640,6 +640,40 @@ function getCandidates(subtype, station) {
   return [...p, ...s];
 }
 
+// PATCH 3: Hard rules — placement constraints that override SECONDARY routing.
+// Returns null if OK, or a string describing the violation.
+function hardRuleViolation(crew, station, subtype, week) {
+  if (crew === 'Ken' && station === 'Benchwork') {
+    return 'Ken never does Benchwork';
+  }
+  if (crew === 'Ken' && station === 'Post Fin Cab Assembly' && subtype !== 'Commercial') {
+    return `Ken Post Fin is Commercial-only (subtype: ${subtype})`;
+  }
+  if (crew === 'Ken' && station === 'Pre Fin Cab Assembly' && subtype !== 'Commercial') {
+    return `Ken Pre Fin is Commercial-only (subtype: ${subtype})`;
+  }
+  if (crew === 'Spencer' && (station === 'Panel Processing' || station === 'Engineering')) {
+    return `Spencer never does ${station}`;
+  }
+  if (crew === 'Rob' && station !== 'Engineering') {
+    return 'Rob can only do Engineering';
+  }
+  if (crew === 'Bob' && week < BOB_START_DATE) {
+    return `Bob employment starts ${BOB_START_DATE} — pre-date routing requires subcontractor entry`;
+  }
+  return null;
+}
+
+// PATCH 3: Per-job crew exclusions from OVERRIDES.crewExclusions
+function jobExclusionViolation(crew, jobId) {
+  const ex = OVERRIDES.crewExclusions?.[crew];
+  if (!ex) return null;
+  if (ex.excludeJobs?.includes(jobId)) {
+    return ex.reason || `${crew} excluded from job ${jobId}`;
+  }
+  return null;
+}
+
 function weeksCountForHours(hours) {
   if (hours <= 40) return 1;
   if (hours <= 80) return 2;
@@ -768,12 +802,20 @@ function computeWindows(job) {
  */
 function allocateStationWeek(grid, job, station, week, hours, candidates) {
   const placements = [];
+  const rejections = [];  // { crew, reason } — for warning context
   let remaining = hours;
 
   for (const crew of candidates) {
     if (remaining <= 0) break;
     if (!grid[crew]?.[week]) continue;
     const slot = grid[crew][week];
+    // PATCH 3: Apply hard rules + crew exclusions to non-subcontractor crew
+    if (!slot.subcontractor) {
+      const ruleHit = hardRuleViolation(crew, station, job.subtype, week);
+      if (ruleHit) { rejections.push({ crew, reason: `hard rule: ${ruleHit}` }); continue; }
+      const exclHit = jobExclusionViolation(crew, job.id);
+      if (exclHit) { rejections.push({ crew, reason: `excluded: ${exclHit}` }); continue; }
+    }
     // Subcontractor slots: no monday parent, but must match station + (optionally) job
     if (slot.subcontractor) {
       if (!slot.allowedStations?.includes(station)) continue;
@@ -805,7 +847,7 @@ function allocateStationWeek(grid, job, station, week, hours, candidates) {
     remaining -= toPlace;
   }
 
-  return { placements, unplaced: Number(remaining.toFixed(2)) };
+  return { placements, unplaced: Number(remaining.toFixed(2)), rejections };
 }
 
 /**
@@ -829,6 +871,7 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
   // Split hours evenly across weeks, then allocate each week
   const perWeek = hours / weeks.length;
   const allPlacements = [];
+  const allRejections = new Map();  // crew → reason (last reason wins; aggregated for warning)
   let totalUnplaced = 0;
 
   for (const wk of weeks) {
@@ -850,8 +893,13 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
     }
     const candidatesForWk = [...assignedSubs, ...candidates, ...generalSubs];
 
-    // For multi-primary (like Post Fin has Ian+Bob), split evenly among primaries first
-    const primariesAvailableThisWeek = primary.filter(c => grid[c]?.[wk]?.parentId && grid[c][wk].available > 0);
+    // PATCH 3: Filter primaries through hard rules + exclusions
+    const primariesAvailableThisWeek = primary.filter(c => {
+      if (!grid[c]?.[wk]?.parentId || grid[c][wk].available <= 0) return false;
+      if (hardRuleViolation(c, station, job.subtype, wk)) return false;
+      if (jobExclusionViolation(c, job.id)) return false;
+      return true;
+    });
 
     if (primariesAvailableThisWeek.length > 1) {
       // Split evenly among primaries; assignedSubs and generalSubs flank each split
@@ -861,15 +909,17 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
         const result = allocateStationWeek(grid, job, station, wk, perPrimary, [...assignedSubs, p, ...others]);
         allPlacements.push(...result.placements);
         totalUnplaced += result.unplaced;
+        for (const r of result.rejections || []) allRejections.set(r.crew, r.reason);
       }
     } else {
       const result = allocateStationWeek(grid, job, station, wk, perWeek, candidatesForWk);
       allPlacements.push(...result.placements);
       totalUnplaced += result.unplaced;
+      for (const r of result.rejections || []) allRejections.set(r.crew, r.reason);
     }
   }
 
-  return { placements: allPlacements, unplaced: totalUnplaced };
+  return { placements: allPlacements, unplaced: totalUnplaced, rejections: allRejections };
 }
 
 // ============================================================================
@@ -943,7 +993,12 @@ async function plan() {
       const result = scheduleStation(grid, job, s.name, s.hours, s.win.start, s.win.end);
       allPlacements.push(...result.placements);
       if (result.unplaced > 0) {
-        warnings.push(`${job.name} / ${s.name}: ${result.unplaced} hrs could not be placed within window ${s.win.start} → ${s.win.end}`);
+        let msg = `${job.name} / ${s.name}: ${result.unplaced} hrs could not be placed within window ${s.win.start} → ${s.win.end}`;
+        if (result.rejections && result.rejections.size > 0) {
+          const blocked = Array.from(result.rejections.entries()).map(([c, r]) => `${c} (${r})`).join('; ');
+          msg += ` — blocked candidates: ${blocked}`;
+        }
+        warnings.push(msg);
       }
     }
 

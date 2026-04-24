@@ -91,5 +91,11 @@
     ]
   },
   "skipJobs": [],
+  "crewExclusions": {
+    "Paisios": {
+      "excludeJobs": ["11835189937"],
+      "reason": "CU-specific bench work — keep Paisios off Roster 5 P2"
+    }
+  },
   "notes": "Edit this file between --plan runs to reflect reality. Planner reads it fresh each run."
 }
