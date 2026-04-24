@@ -227,9 +227,29 @@ function weeksInRange(startMonday, endMonday) {
   return weeks;
 }
 
-function filterBob(crewList, weekDate) {
-  if (weekDate >= BOB_START_DATE) return crewList;
-  return crewList.filter(c => c !== 'Bob');
+// Hard rules — placement constraints that override the ROUTING table.
+// Returns null if OK, or a string describing the violation.
+// Mirrors rebalance-schedule.js HARD_RULES (matrix doc §5).
+function hardRuleViolation(crew, station, subtype, week) {
+  if (crew === 'Ken' && station === 'Benchwork') {
+    return 'Ken never does Benchwork';
+  }
+  if (crew === 'Ken' && station === 'Post Fin Cab Assembly' && subtype !== 'Commercial') {
+    return `Ken Post Fin is Commercial-only (subtype: ${subtype})`;
+  }
+  if (crew === 'Ken' && station === 'Pre Fin Cab Assembly' && subtype !== 'Commercial') {
+    return `Ken Pre Fin is Commercial-only (subtype: ${subtype})`;
+  }
+  if (crew === 'Spencer' && (station === 'Panel Processing' || station === 'Engineering')) {
+    return `Spencer never does ${station}`;
+  }
+  if (crew === 'Rob' && station !== 'Engineering') {
+    return 'Rob can only do Engineering';
+  }
+  if (crew === 'Bob' && week < BOB_START_DATE) {
+    return `Bob employment starts ${BOB_START_DATE}`;
+  }
+  return null;
 }
 
 // =========== WINDOW CALCULATION ===========
@@ -249,14 +269,12 @@ function calculateWindows(deliveryDate, finishingDays, hours) {
     ? weeksBeforeMonday(postFinEnd, postFinWeeks - 1)
     : null;
 
-  // Finish Return Date = Friday of Post Fin first week
-  const finishReturn = postFinStart ? fridayOf(postFinStart) : null;
-
-  // Finish Drop Date = finishReturn - finishingDays (business days)
-  // Working backwards from finishReturn
+  // Finish Drop Date — anchor: walk back finishingDays business days from
+  // a provisional Return = Friday of Post Fin first week. Drop calc unchanged.
+  const provisionalReturn = postFinStart ? fridayOf(postFinStart) : null;
   let finishDrop = null;
-  if (finishReturn) {
-    const d = new Date(finishReturn + 'T12:00:00Z');
+  if (provisionalReturn) {
+    const d = new Date(provisionalReturn + 'T12:00:00Z');
     let subtracted = 0;
     while (subtracted < finishingDays) {
       d.setUTCDate(d.getUTCDate() - 1);
@@ -265,6 +283,9 @@ function calculateWindows(deliveryDate, finishingDays, hours) {
     }
     finishDrop = d.toISOString().slice(0, 10);
   }
+
+  // Finish Return Date = Drop + finishingDays business days (skip Sat/Sun) per spec
+  const finishReturn = finishDrop ? addBusinessDays(finishDrop, finishingDays) : null;
 
   // Pre Fin Cab Assembly
   const preFinWeeks = weeksFromHours(hours.preFin);
@@ -588,10 +609,17 @@ async function scheduleJob(job) {
 
     for (const weekMonday of plan.weeks) {
       const primariesBase = ROUTING[subtype][plan.name] || [];
-      const primaries = filterBob(primariesBase, weekMonday);
+      const primaries = [];
+      const blocked = [];
+      for (const c of primariesBase) {
+        const v = hardRuleViolation(c, plan.name, subtype, weekMonday);
+        if (v) blocked.push(`${c} (${v})`);
+        else primaries.push(c);
+      }
 
       if (primaries.length === 0) {
-        console.log(`  ⚠ ${plan.name} @ ${weekMonday}: no primaries available`);
+        const detail = blocked.length > 0 ? ` — blocked by hard rules: ${blocked.join('; ')}` : '';
+        console.log(`  ⚠ ${plan.name} @ ${weekMonday}: no primaries available${detail}`);
         continue;
       }
 
