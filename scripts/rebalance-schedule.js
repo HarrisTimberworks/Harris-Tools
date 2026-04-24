@@ -214,29 +214,41 @@ const SECONDARY = {
     'Pre Fin Cab Assembly':   ['Ian', 'Bob', 'Paisios'],  // Ken removed per matrix hard rule
     'Post Fin Cab Assembly':  ['Spencer', 'Paisios'],
     'Engineering':            ['Paisios', 'Jonathan'],
+    'Panel Processing':       ['Bob', 'Ian'],  // Ian emergency only — not CNC-trained
+    'Pack & Ship':            ['Ian', 'Spencer', 'Bob', 'Jonathan'],
+    'Delivery':               ['Ian', 'Spencer', 'Bob', 'Jonathan'],
   },
   'Res - Frameless': {
     'Benchwork':              ['Spencer', 'Bob', 'Paisios'],
     'Pre Fin Cab Assembly':   ['Spencer', 'Bob', 'Paisios'],  // Ken removed per matrix hard rule
     'Post Fin Cab Assembly':  ['Spencer', 'Paisios'],
     'Panel Processing':       ['Ian', 'Bob'],
+    'Engineering':            ['Paisios', 'Jonathan', 'Rob'],  // Rob = fill-only tertiary per doc §7 priority ladder
+    'Pack & Ship':            ['Ian', 'Spencer', 'Bob', 'Jonathan'],
+    'Delivery':               ['Ian', 'Spencer', 'Bob', 'Jonathan'],
   },
   'Commercial': {
     'Benchwork':              ['Spencer', 'Bob', 'Paisios'],
     'Pre Fin Cab Assembly':   ['Spencer', 'Bob', 'Paisios', 'Ken'],
     'Post Fin Cab Assembly':  ['Spencer', 'Paisios', 'Ken'],  // Ken OK for commercial PostFin
     'Panel Processing':       ['Ian', 'Bob'],
+    'Pack & Ship':            ['Ian', 'Spencer', 'Bob', 'Jonathan'],
+    'Delivery':               ['Ian', 'Spencer', 'Bob', 'Jonathan'],
   },
   'Countertop/Surface': {
     'Benchwork':              ['Bob', 'Spencer'],
     'Post Fin Cab Assembly':  ['Spencer', 'Paisios'],
     'Panel Processing':       ['Bob'],
+    'Pack & Ship':            ['Ian', 'Spencer', 'Bob', 'Jonathan'],
+    'Delivery':               ['Ian', 'Spencer', 'Bob', 'Jonathan'],
   },
   'Mixed': {
     'Benchwork':              ['Ian', 'Bob', 'Paisios'],
     'Pre Fin Cab Assembly':   ['Ian', 'Bob', 'Paisios'],  // Ken removed per matrix hard rule
     'Post Fin Cab Assembly':  ['Spencer', 'Paisios'],
     'Engineering':            ['Paisios', 'Jonathan'],
+    'Pack & Ship':            ['Ian', 'Spencer', 'Bob', 'Jonathan'],
+    'Delivery':               ['Ian', 'Spencer', 'Bob', 'Jonathan'],
   },
 };
 
