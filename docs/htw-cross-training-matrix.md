@@ -1,6 +1,6 @@
 # 🎯 HTW Cross-Training + Routing Matrix
 
-**Last updated:** 2026-04-23
+**Last updated:** 2026-04-24
 **Authority:** This is the single source of truth for crew station assignments. When this conflicts with other docs or script source, this wins. Update this doc FIRST when roles/skills change, then propagate to scripts.
 
 **Files that reference this matrix (keep in sync):**
@@ -91,7 +91,7 @@ Used by the rebalancer when Primary is at/over capacity, or when Chris explicitl
 | Engineering | Paisios, Jonathan |
 | Panel Processing | Bob, Ian (emergency only — Ian isn't trained on CNC) |
 | Benchwork | Ian, Bob, Paisios |
-| Pre Fin Cab Assembly | Ian, Bob, Paisios, Ken (emergency only) |
+| Pre Fin Cab Assembly | Ian, Bob, Paisios |
 | Post Fin Cab Assembly | Spencer, Paisios |
 | Pack & Ship | Ian, Spencer, Bob, Jonathan |
 | Delivery | Ian, Spencer, Bob, Jonathan |
@@ -103,7 +103,7 @@ Used by the rebalancer when Primary is at/over capacity, or when Chris explicitl
 | Engineering | Paisios, Jonathan, Rob (fill only) |
 | Panel Processing | Bob, Ian (CNC-trained for FL) |
 | Benchwork | Spencer, Bob, Paisios |
-| Pre Fin Cab Assembly | Spencer, Bob, Paisios, Ken (emergency only) |
+| Pre Fin Cab Assembly | Spencer, Bob, Paisios |
 | Post Fin Cab Assembly | Spencer, Paisios |
 | Pack & Ship | Ian, Spencer, Bob, Jonathan |
 | Delivery | Ian, Spencer, Bob, Jonathan |
@@ -138,7 +138,7 @@ Used by the rebalancer when Primary is at/over capacity, or when Chris explicitl
 | Engineering | Jonathan, Paisios |
 | Panel Processing | Bob, Ian |
 | Benchwork | Ian, Bob, Paisios |
-| Pre Fin Cab Assembly | Ian, Bob, Paisios, Ken (emergency only) |
+| Pre Fin Cab Assembly | Ian, Bob, Paisios |
 | Post Fin Cab Assembly | Spencer, Paisios |
 | Pack & Ship | Ian, Spencer, Bob, Jonathan |
 | Delivery | Ian, Spencer, Bob, Jonathan |
@@ -326,13 +326,13 @@ const SECONDARY = {
   'Res - Face Frame': {
     'Engineering': ['Paisios', 'Jonathan'],
     'Benchwork': ['Ian', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly': ['Ian', 'Bob', 'Paisios', 'Ken'],
+    'Pre Fin Cab Assembly': ['Ian', 'Bob', 'Paisios'],
     'Post Fin Cab Assembly': ['Spencer', 'Paisios'],
   },
   'Res - Frameless': {
     'Engineering': ['Paisios', 'Jonathan'],
     'Benchwork': ['Spencer', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly': ['Spencer', 'Bob', 'Paisios', 'Ken'],
+    'Pre Fin Cab Assembly': ['Spencer', 'Bob', 'Paisios'],
     'Post Fin Cab Assembly': ['Spencer', 'Paisios'],
     'Panel Processing': ['Ian', 'Bob'],
   },
@@ -350,7 +350,7 @@ const SECONDARY = {
   'Mixed': {
     'Engineering': ['Paisios', 'Jonathan'],
     'Benchwork': ['Ian', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly': ['Ian', 'Bob', 'Paisios', 'Ken'],
+    'Pre Fin Cab Assembly': ['Ian', 'Bob', 'Paisios'],
     'Post Fin Cab Assembly': ['Spencer', 'Paisios'],
   },
 };
@@ -373,6 +373,7 @@ Uses a combined MATRIX with Primary / Secondary flags — if this doc changes, p
 | 2026-04-23 | Documented Bob subcontract (4/27 Mon-Wed) vs employee (5/18+) split | Bob bridging period |
 | 2026-04-23 | Added Hard Rules section | Previously implicit — making explicit |
 | 2026-04-23 | Added Res-FL Engineering priority ladder | Critical-path edge case |
+| 2026-04-24 | Removed Ken from PreFin Secondary lists for Res-FF, Res-FL, and Mixed | Internal inconsistency — Hard Rule #6 and Ken's profile both specify Commercial-only for PreFin, but the Secondary tables for non-Commercial subtypes incorrectly listed Ken as a fallback. Hard rule wins; tables now match. Updated SECONDARY object in source-code mirror to match. |
 
 ---
 
