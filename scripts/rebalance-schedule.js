@@ -589,6 +589,26 @@ function buildCapacityGrid(crewParents, timeOffList, weeks, existingSubs, active
     }
   }
 
+  // PATCH 1: Subcontractor pool — add each sub as a virtual crew member
+  // with capacity for the ONE week they're listed on (not recurring)
+  for (const [week, subs] of Object.entries(OVERRIDES.subcontractors || {})) {
+    for (const sub of subs) {
+      if (!grid[sub.name]) grid[sub.name] = {};
+      grid[sub.name][week] = {
+        parentId: null,
+        base: sub.hours,
+        timeOff: 0,
+        available: sub.hours,
+        committed: 0,
+        assignments: [],
+        subcontractor: true,
+        allowedStations: sub.allowedStations || [],
+        assignedJobId: sub.assignedJobId || null,
+        subcontractorReason: sub.reason || null,
+      };
+    }
+  }
+
   return grid;
 }
 
@@ -743,13 +763,19 @@ function allocateStationWeek(grid, job, station, week, hours, candidates) {
   for (const crew of candidates) {
     if (remaining <= 0) break;
     if (!grid[crew]?.[week]) continue;
-    if (!grid[crew][week].parentId) continue;  // no parent row means skip
     const slot = grid[crew][week];
+    // Subcontractor slots: no monday parent, but must match station + (optionally) job
+    if (slot.subcontractor) {
+      if (!slot.allowedStations?.includes(station)) continue;
+      if (slot.assignedJobId && slot.assignedJobId !== job.id) continue;
+    } else if (!slot.parentId) {
+      continue;  // regular crew with no allocation parent row → skip
+    }
     const softCap = slot.available * SOFT_CAP_MULTIPLIER;
     const room = Math.max(0, softCap - slot.committed);
     if (room <= 0) continue;
     const toPlace = Math.min(remaining, room);
-    placements.push({
+    const placement = {
       crew,
       week,
       hours: Number(toPlace.toFixed(2)),
@@ -758,7 +784,12 @@ function allocateStationWeek(grid, job, station, week, hours, candidates) {
       jobId: job.id,
       jobName: job.name,
       masterPmId: job.masterPmId,
-    });
+    };
+    if (slot.subcontractor) {
+      placement.isSubcontractor = true;
+      placement.subcontractorReason = slot.subcontractorReason;
+    }
+    placements.push(placement);
     slot.committed += toPlace;
     slot.assignments.push({ job: job.name, station, hours: toPlace });
     remaining -= toPlace;
@@ -791,19 +822,38 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
   let totalUnplaced = 0;
 
   for (const wk of weeks) {
+    // PATCH 1: Find subcontractor pools active this week, eligible for this station+job
+    // - Subs with assignedJobId === job.id get priority (dedicated to this job)
+    // - Subs with no assignedJobId become general fallback (after secondary crew)
+    // - Subs with assignedJobId !== job.id are excluded entirely
+    const assignedSubs = [];
+    const generalSubs = [];
+    for (const [name, slots] of Object.entries(grid)) {
+      const slot = slots[wk];
+      if (!slot || !slot.subcontractor) continue;
+      if (!slot.allowedStations?.includes(station)) continue;
+      if (slot.assignedJobId) {
+        if (slot.assignedJobId === job.id) assignedSubs.push(name);
+      } else {
+        generalSubs.push(name);
+      }
+    }
+    const candidatesForWk = [...assignedSubs, ...candidates, ...generalSubs];
+
     // For multi-primary (like Post Fin has Ian+Bob), split evenly among primaries first
     const primariesAvailableThisWeek = primary.filter(c => grid[c]?.[wk]?.parentId && grid[c][wk].available > 0);
 
     if (primariesAvailableThisWeek.length > 1) {
-      // Split evenly among primaries
+      // Split evenly among primaries; assignedSubs and generalSubs flank each split
       const perPrimary = perWeek / primariesAvailableThisWeek.length;
       for (const p of primariesAvailableThisWeek) {
-        const result = allocateStationWeek(grid, job, station, wk, perPrimary, [p, ...candidates.filter(c => c !== p)]);
+        const others = [...candidates.filter(c => c !== p), ...generalSubs];
+        const result = allocateStationWeek(grid, job, station, wk, perPrimary, [...assignedSubs, p, ...others]);
         allPlacements.push(...result.placements);
         totalUnplaced += result.unplaced;
       }
     } else {
-      const result = allocateStationWeek(grid, job, station, wk, perWeek, candidates);
+      const result = allocateStationWeek(grid, job, station, wk, perWeek, candidatesForWk);
       allPlacements.push(...result.placements);
       totalUnplaced += result.unplaced;
     }
@@ -915,6 +965,7 @@ async function plan() {
     report.capacityGrid[crew] = {};
     for (const wk of weeks) {
       const slot = grid[crew][wk];
+      if (!slot) continue;  // subcontractor virtual-crew rows only exist on one week
       if (slot.committed > 0 || slot.available > 0) {
         report.capacityGrid[crew][wk] = {
           avail: slot.available,
@@ -952,6 +1003,26 @@ async function plan() {
   console.log('\n=== WARNINGS ===');
   if (warnings.length === 0) console.log('  None ✅');
   else warnings.forEach(w => console.log(`  ⚠️  ${w}`));
+
+  // PATCH 1: Subcontractor usage summary
+  const subUsage = new Map();
+  for (const p of allPlacements) {
+    if (!p.isSubcontractor) continue;
+    const key = `${p.week}|${p.crew}`;
+    if (!subUsage.has(key)) subUsage.set(key, { used: 0, jobs: new Set() });
+    const entry = subUsage.get(key);
+    entry.used += p.hours;
+    entry.jobs.add(p.jobName);
+  }
+  if (subUsage.size > 0) {
+    console.log('\n=== SUBCONTRACTOR USAGE ===');
+    for (const [key, info] of subUsage.entries()) {
+      const [week, name] = key.split('|');
+      const pool = grid[name]?.[week]?.base || 0;
+      const jobsList = Array.from(info.jobs).join(', ');
+      console.log(`  ${week} ${name}: ${info.used.toFixed(1)}/${pool} hrs — ${jobsList}`);
+    }
+  }
 
   console.log('\n=== SUMMARY ===');
   console.log(`Total placements: ${allPlacements.length}`);
@@ -999,7 +1070,9 @@ async function execute() {
   // Create new subitems
   console.log('\nCreating new subitems...');
   let created = 0;
+  let subSkipped = 0;
   for (const p of plan.placements) {
+    if (p.isSubcontractor) { subSkipped++; continue; }  // PATCH 1: subs are ops-only, no monday subitem
     const stationId = STATION_IDS[p.station];
     const personId = CREW_PERSON_ID[p.crew];
     const personPart = personId ? `,\"person\":{\"personsAndTeams\":[{\"id\":${personId},\"kind\":\"person\"}]}` : '';
@@ -1021,6 +1094,7 @@ async function execute() {
     if (created % 10 === 0) console.log(`  Created ${created}/${plan.placements.length}`);
   }
   console.log(`Created ${created} subitems.`);
+  if (subSkipped > 0) console.log(`Skipped ${subSkipped} subcontractor placement(s) — no monday subitem created (ops-tracked only).`);
 
   console.log('\n✅ Execution complete.');
 }
