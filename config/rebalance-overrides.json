@@ -90,13 +90,13 @@
       { "name": "Edgeband-subcontractor", "hours": 32, "allowedStations": ["Panel Processing"], "assignedJobId": "11693198809", "reason": "Cator Ruma edgebanding specialist" }
     ],
     "2026-05-11": [
-      { "name": "CU-Bench-sub-A", "hours": 32, "allowedStations": ["Benchwork"], "assignedJobId": "11835189937", "reason": "R5-P2 CU bench overflow — Paisios excluded, Ian/Spencer at cap. Offer to Bob first (pre-employee subcontract); backup source available if declined." }
+      { "name": "CU-Bench-sub-A", "hours": 32, "allowedStations": ["Benchwork"], "assignedJobId": "11835189937", "fallbackOnly": true, "reason": "R5-P2 CU bench overflow — Paisios excluded, Ian/Spencer at cap. Offer to Bob first (pre-employee subcontract); backup source available if declined." }
     ],
     "2026-05-18": [
-      { "name": "CU-Bench-sub-B", "hours": 32, "allowedStations": ["Benchwork"], "assignedJobId": "11835189937", "reason": "R5-P2 CU bench overflow continued. Offer to Bob first; backup source available." }
+      { "name": "CU-Bench-sub-B", "hours": 32, "allowedStations": ["Benchwork"], "assignedJobId": "11835189937", "fallbackOnly": true, "reason": "R5-P2 CU bench overflow continued. Offer to Bob first; backup source available." }
     ],
     "2026-05-25": [
-      { "name": "R5-P1-PostFin-sub", "hours": 24, "allowedStations": ["Post Fin Cab Assembly"], "assignedJobId": "11693186870", "reason": "R5-P1 PostFin overflow — Ian PTO 5/25-5/29, delivery firm 5/27. Offer to Bob first; backup source available." }
+      { "name": "R5-P1-PostFin-sub", "hours": 24, "allowedStations": ["Post Fin Cab Assembly"], "assignedJobId": "11693186870", "fallbackOnly": true, "reason": "R5-P1 PostFin overflow — Ian PTO 5/25-5/29, delivery firm 5/27. Offer to Bob first; backup source available." }
     ]
   },
   "skipJobs": [],

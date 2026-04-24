@@ -626,6 +626,7 @@ function buildCapacityGrid(crewParents, timeOffList, weeks, existingSubs, active
         subcontractor: true,
         allowedStations: sub.allowedStations || [],
         assignedJobId: sub.assignedJobId || null,
+        fallbackOnly: sub.fallbackOnly || false,
         subcontractorReason: sub.reason || null,
       };
     }
@@ -891,23 +892,28 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
   let totalUnplaced = 0;
 
   for (const wk of weeks) {
-    // PATCH 1: Find subcontractor pools active this week, eligible for this station+job
-    // - Subs with assignedJobId === job.id get priority (dedicated to this job)
-    // - Subs with no assignedJobId become general fallback (after secondary crew)
+    // PATCH 1 + fallbackOnly: Find subcontractor pools active this week, eligible for this station+job.
+    // - assignedSubs: assignedJobId === job.id, NOT fallbackOnly → BEFORE primary
+    // - generalSubs:  no assignedJobId, NOT fallbackOnly → AFTER secondary, BEFORE fallback
+    // - fallbackSubs: fallbackOnly === true (any assignedJobId) → LAST (overflow only)
     // - Subs with assignedJobId !== job.id are excluded entirely
     const assignedSubs = [];
     const generalSubs = [];
+    const fallbackSubs = [];
     for (const [name, slots] of Object.entries(grid)) {
       const slot = slots[wk];
       if (!slot || !slot.subcontractor) continue;
       if (!slot.allowedStations?.includes(station)) continue;
-      if (slot.assignedJobId) {
-        if (slot.assignedJobId === job.id) assignedSubs.push(name);
+      if (slot.assignedJobId && slot.assignedJobId !== job.id) continue;
+      if (slot.fallbackOnly) {
+        fallbackSubs.push(name);
+      } else if (slot.assignedJobId) {
+        assignedSubs.push(name);
       } else {
         generalSubs.push(name);
       }
     }
-    const candidatesForWk = [...assignedSubs, ...candidates, ...generalSubs];
+    const candidatesForWk = [...assignedSubs, ...candidates, ...generalSubs, ...fallbackSubs];
 
     // PATCH 3: Filter primaries through hard rules + exclusions
     const primariesAvailableThisWeek = primary.filter(c => {
@@ -918,10 +924,10 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
     });
 
     if (primariesAvailableThisWeek.length > 1) {
-      // Split evenly among primaries; assignedSubs and generalSubs flank each split
+      // Split evenly among primaries; sub buckets flank each split in priority order
       const perPrimary = perWeek / primariesAvailableThisWeek.length;
       for (const p of primariesAvailableThisWeek) {
-        const others = [...candidates.filter(c => c !== p), ...generalSubs];
+        const others = [...candidates.filter(c => c !== p), ...generalSubs, ...fallbackSubs];
         const result = allocateStationWeek(grid, job, station, wk, perPrimary, [...assignedSubs, p, ...others]);
         allPlacements.push(...result.placements);
         totalUnplaced += result.unplaced;
