@@ -3,8 +3,8 @@
   "jobOverrides": {
     "11693156502": {
       "name": "F&B - Westridge Office",
-      "note": "In flight — Engineering + Panel + Bench complete. Only Post Fin + Pack/Deliver remain.",
-      "remainingHours": { "eng": 0, "panel": 0, "bench": 0, "prefin": 0, "postfin": 8.6 }
+      "note": "Corrected 2026-04-23 — only Engineering complete; all other stations still to do. Prior override incorrectly zeroed Panel/Bench/PreFin.",
+      "remainingHours": { "eng": 0, "panel": 8.5, "bench": 3.1, "prefin": 7.1, "postfin": 8.6 }
     },
     "11693170191": {
       "name": "SH - McMorris",
