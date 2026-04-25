@@ -958,20 +958,40 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
   const candidates = getCandidates(job.subtype, station);
   const primary = getPrimary(job.subtype, station);
 
-  // Split hours evenly across weeks, then allocate each week
-  const perWeek = hours / weeks.length;
   const allPlacements = [];
   const allRejections = new Map();  // crew → reason (last reason wins; aggregated for warning)
   const allWarnings = [];  // PATCH 4: forceAssignment warnings (cap exceeded, missing parent, etc.)
   let totalUnplaced = 0;
 
-  for (const wk of weeks) {
+  // PATCH 5 (2026-04-25): cumulative-budget force tracking.
+  // Was: const perWeek = hours / weeks.length, force capped at perWeek per week.
+  // Bug: a force exceeding perWeek in an early week didn't shrink later weeks' budgets,
+  // causing over-placement (e.g., Edge Optics Bench 49.9h budget → 58.21h placed across
+  // 3 weeks because each week kept a fresh 16.63h auto-placement budget regardless of
+  // a prior 24.95h force). Fix: recompute perWeek from remainingBudget/weeksRemaining
+  // each iteration; deduct both forced and auto-placed hours from the running total.
+  let remainingBudget = hours;
+
+  for (let i = 0; i < weeks.length; i++) {
+    const wk = weeks[i];
+    const weeksRemaining = weeks.length - i;
+    const perWeek = weeksRemaining > 0 ? remainingBudget / weeksRemaining : 0;
+
     // PATCH 4: Apply force assignments first; deduct from this week's share before normal routing
     const forceResult = applyForceAssignments(grid, job, station, wk, perWeek);
     allPlacements.push(...forceResult.placements);
     for (const w of forceResult.warnings) allWarnings.push(w);
+
+    // PATCH 5: clamp force consumption to remaining budget; warn if forces exceed it.
+    let forceConsumed = forceResult.hoursConsumed;
+    if (forceConsumed > remainingBudget + 1e-9) {
+      allWarnings.push(`forceAssignment exceeds remaining job budget for ${job.name} / ${station} ${wk}: forces totaled ${forceConsumed.toFixed(2)}h but only ${remainingBudget.toFixed(2)}h remained in window — clamping budget tracking (placements stand)`);
+      forceConsumed = remainingBudget;
+    }
+    remainingBudget = Math.max(0, remainingBudget - forceConsumed);
+
     const remainingThisWeek = Math.max(0, perWeek - forceResult.hoursConsumed);
-    if (remainingThisWeek <= 0) continue;
+    if (remainingThisWeek <= 0 || remainingBudget <= 0) continue;
 
     // PATCH 1 + fallbackOnly: Find subcontractor pools active this week, eligible for this station+job.
     // - assignedSubs: assignedJobId === job.id, NOT fallbackOnly → BEFORE primary
@@ -1004,6 +1024,8 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
       return true;
     });
 
+    let autoPlacedThisWeek = 0;
+
     if (primariesAvailableThisWeek.length > 1) {
       // Split evenly among primaries; sub buckets flank each split in priority order
       const perPrimary = remainingThisWeek / primariesAvailableThisWeek.length;
@@ -1012,14 +1034,19 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
         const result = allocateStationWeek(grid, job, station, wk, perPrimary, [...assignedSubs, p, ...others]);
         allPlacements.push(...result.placements);
         totalUnplaced += result.unplaced;
+        autoPlacedThisWeek += (perPrimary - result.unplaced);
         for (const r of result.rejections || []) allRejections.set(r.crew, r.reason);
       }
     } else {
       const result = allocateStationWeek(grid, job, station, wk, remainingThisWeek, candidatesForWk);
       allPlacements.push(...result.placements);
       totalUnplaced += result.unplaced;
+      autoPlacedThisWeek += (remainingThisWeek - result.unplaced);
       for (const r of result.rejections || []) allRejections.set(r.crew, r.reason);
     }
+
+    // PATCH 5: deduct auto-placed hours so next iteration's perWeek reflects what's actually left.
+    remainingBudget = Math.max(0, remainingBudget - autoPlacedThisWeek);
   }
 
   return { placements: allPlacements, unplaced: totalUnplaced, rejections: allRejections, warnings: allWarnings };
