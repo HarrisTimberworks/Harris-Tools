@@ -4,7 +4,8 @@
     "11693156502": {
       "name": "F&B - Westridge Office",
       "note": "Corrected 2026-04-23 — only Engineering complete; all other stations still to do. Prior override incorrectly zeroed Panel/Bench/PreFin.",
-      "remainingHours": { "eng": 0, "panel": 8.5, "bench": 3.1, "prefin": 7.1, "postfin": 8.6 }
+      "remainingHours": { "eng": 0, "panel": 8.5, "bench": 3.1, "prefin": 7.1, "postfin": 8.6 },
+      "customWindow": { "panel": { "start": "2026-04-27", "end": "2026-04-27" } }
     },
     "11693170191": {
       "name": "SH - McMorris",
@@ -14,7 +15,12 @@
     "11693176301": {
       "name": "MAP - Edge Optics",
       "note": "15 hrs Eng remaining (CU-related), rest untouched",
-      "remainingHours": { "eng": 15, "panel": 13, "bench": 49.9, "prefin": 0, "postfin": 6.8 }
+      "remainingHours": { "eng": 15, "panel": 13, "bench": 49.9, "prefin": 0, "postfin": 6.8 },
+      "customWindow": {
+        "eng":   { "start": "2026-04-20", "end": "2026-04-20" },
+        "panel": { "start": "2026-04-27", "end": "2026-04-27" },
+        "bench": { "start": "2026-04-27", "end": "2026-05-15" }
+      }
     },
     "11693198809": {
       "name": "NC - Cator Ruma",
@@ -35,7 +41,8 @@
     "11693187209": {
       "name": "Gilbert - Dining Room & Range Hood",
       "note": "Eng done. Delivery pushed to 5/22.",
-      "remainingHours": { "eng": 0, "panel": 3.3, "bench": 1, "prefin": 8.9, "postfin": 2 }
+      "remainingHours": { "eng": 0, "panel": 3.3, "bench": 1, "prefin": 8.9, "postfin": 2 },
+      "customWindow": { "panel": { "start": "2026-04-27", "end": "2026-04-27" } }
     },
     "11693164567": {
       "name": "Liz Stapp - Laundry Room",
@@ -49,13 +56,19 @@
     },
     "11693177783": {
       "name": "F&B - Quince Ave",
-      "note": "Full job.",
-      "remainingHours": null
+      "note": "Full job. Delivery 5/26 (Tue). Pulled 1 week forward via force + BCH sub to free tail before Memorial Day.",
+      "remainingHours": null,
+      "customWindow": {
+        "bench":   { "start": "2026-05-11", "end": "2026-05-11" },
+        "prefin":  { "start": "2026-05-11", "end": "2026-05-11" },
+        "postfin": { "start": "2026-05-18", "end": "2026-05-18" }
+      }
     },
     "11693166564": {
       "name": "MAG - BCH",
       "note": "6 hrs Eng remaining. Delivery pushed to 5/20.",
-      "remainingHours": { "eng": 6, "panel": 15, "bench": 36, "prefin": 2, "postfin": 10.4 }
+      "remainingHours": { "eng": 6, "panel": 15, "bench": 36, "prefin": 2, "postfin": 10.4 },
+      "customWindow": { "eng": { "start": "2026-05-04", "end": "2026-05-04" } }
     },
     "11693186985": {
       "name": "MAG - Atom Computing",
@@ -71,7 +84,8 @@
       "name": "MAG - Roster 5 — Custom Units (P2)",
       "note": "40 hrs Eng remaining. CU bench 126 (no boxes). Post Fin 16 for one piece. Can run Post Fin parallel with tail-end of bench.",
       "remainingHours": { "eng": 40, "panel": 22, "bench": 126, "prefin": 0, "postfin": 16 },
-      "parallelPostFin": true
+      "parallelPostFin": true,
+      "customWindow": { "eng": { "start": "2026-04-27", "end": "2026-05-08" } }
     }
   },
   "crewCapacityOverrides": {
@@ -87,10 +101,12 @@
   "subcontractors": {
     "2026-04-27": [
       { "name": "Bob-subcontract", "hours": 24, "allowedStations": ["Panel Processing", "Benchwork"], "reason": "Bob available Mon-Wed as subcontractor before 5/18 employee start" },
-      { "name": "Edgeband-subcontractor", "hours": 32, "allowedStations": ["Panel Processing"], "assignedJobId": "11693198809", "reason": "Cator Ruma edgebanding specialist" }
+      { "name": "Edgeband-subcontractor", "hours": 32, "allowedStations": ["Panel Processing"], "assignedJobId": "11693198809", "reason": "Cator Ruma edgebanding specialist" },
+      { "name": "Subcontractor (BOB) — Cator pre-employment", "hours": 24, "allowedStations": ["Panel Processing"], "assignedJobId": "11693198809", "reason": "Friday meeting 2026-04-25: off-board sub assignment for Cator Ruma Panel work on 5/4 (pre-employee, before Bob's 5/18 employee start). Note: likely inert in --plan because Cator Panel is fully allocated in week 4/27 and Cator's customWindow.panel ends 5/01 — kept for ops/payroll bookkeeping." }
     ],
     "2026-05-11": [
-      { "name": "CU-Bench-sub-A", "hours": 32, "allowedStations": ["Benchwork"], "assignedJobId": "11835189937", "reason": "R5-P2 CU bench — Bob is Secondary by strategic design (Shop Foreman teaching role), so sub absorbs by default to avoid Ian-only overload. Offer to Bob first; backup source available." }
+      { "name": "CU-Bench-sub-A", "hours": 32, "allowedStations": ["Benchwork"], "assignedJobId": "11835189937", "reason": "R5-P2 CU bench — Bob is Secondary by strategic design (Shop Foreman teaching role), so sub absorbs by default to avoid Ian-only overload. Offer to Bob first; backup source available." },
+      { "name": "BCH-Bench-sub", "hours": 19, "allowedStations": ["Benchwork"], "assignedJobId": "11693166564", "reason": "Absorbs 19h of MAG BCH Bench 5/11 to free Spencer capacity for Quince PreFin/Bench that same week" }
     ],
     "2026-05-18": [
       { "name": "CU-Bench-sub-B", "hours": 32, "allowedStations": ["Benchwork"], "assignedJobId": "11835189937", "reason": "R5-P2 CU bench continued — sub absorbs by default; specific Bob pairings handled via forceAssignments. Offer to Bob first; backup source available." }
@@ -129,6 +145,86 @@
       "week": "2026-05-18",
       "hours": 20,
       "reason": "Pair Bob with Ian on CU bench during ramp; Bob is Shop Foreman and is intentionally Secondary to enable teaching — assigning CU bench here is part of that operating model"
+    },
+    {
+      "crew": "Spencer",
+      "jobId": "11693177783",
+      "stations": ["Benchwork"],
+      "week": "2026-05-11",
+      "hours": 7,
+      "reason": "Quince pulled 1 week forward to give finisher + PostFin breathing room before Tue 5/26 firm delivery"
+    },
+    {
+      "crew": "Spencer",
+      "jobId": "11693177783",
+      "stations": ["Pre Fin Cab Assembly"],
+      "week": "2026-05-11",
+      "hours": 12,
+      "reason": "Quince pulled 1 week forward to give finisher + PostFin breathing room before Tue 5/26 firm delivery"
+    },
+    {
+      "crew": "Bob",
+      "jobId": "11693177783",
+      "stations": ["Post Fin Cab Assembly"],
+      "week": "2026-05-18",
+      "hours": 6.2,
+      "reason": "Quince PostFin pulled 1 week forward to complete before Tue 5/26 delivery; avoids Memorial Day crunch"
+    },
+    {
+      "crew": "Spencer",
+      "jobId": "11693176301",
+      "stations": ["Benchwork"],
+      "week": "2026-04-27",
+      "hours": 24.95,
+      "reason": "Friday meeting 2026-04-25: pull Edge Optics Bench forward 3 weeks to load Spencer earlier and free up 5/11"
+    },
+    {
+      "crew": "Spencer",
+      "jobId": "11693176301",
+      "stations": ["Benchwork"],
+      "week": "2026-05-04",
+      "hours": 24.95,
+      "reason": "Friday meeting 2026-04-25 follow-up: pin Edge Optics Bench remainder to Spencer 5/4 to keep Ian 5/11 clear (the planner re-routed remainder back to Ian Primary after the move force; this anchors it explicitly)"
+    },
+    {
+      "crew": "Jonathan",
+      "jobId": "11835189937",
+      "stations": ["Engineering"],
+      "week": "2026-04-27",
+      "hours": 20,
+      "reason": "Friday meeting 2026-04-25: split 40h R5-P2 CU Eng across 4/27 + 5/4 to relieve Jonathan 4/27 cap"
+    },
+    {
+      "crew": "Jonathan",
+      "jobId": "11835189937",
+      "stations": ["Engineering"],
+      "week": "2026-05-04",
+      "hours": 20,
+      "reason": "Friday meeting 2026-04-25: second half of R5-P2 CU Eng split"
+    },
+    {
+      "crew": "Jonathan",
+      "jobId": "11693166564",
+      "stations": ["Engineering"],
+      "week": "2026-05-04",
+      "hours": 6,
+      "reason": "Friday meeting 2026-04-25: BCH Eng moves from 4/27 to 5/4 to free Jonathan capacity for R5-P2 CU split"
+    },
+    {
+      "crew": "Ken",
+      "jobId": "11693156502",
+      "stations": ["Panel Processing"],
+      "week": "2026-04-27",
+      "hours": 8.5,
+      "reason": "Friday meeting 2026-04-25: Westridge Panel moves from 4/20 to 4/27 — Ken was overloaded for the 5/1 finish drop"
+    },
+    {
+      "crew": "Ken",
+      "jobId": "11693187209",
+      "stations": ["Panel Processing"],
+      "week": "2026-04-27",
+      "hours": 3.3,
+      "reason": "Friday meeting 2026-04-25: Gilbert Panel moves from 5/4 to 4/27 to relieve Ken 5/4 cap"
     }
   ],
   "notes": "Edit this file between --plan runs to reflect reality. Planner reads it fresh each run."
