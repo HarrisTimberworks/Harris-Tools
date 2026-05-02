@@ -1,21 +1,24 @@
-# Phase 1 — Manual Overrides System — Plan for /ultraplan Review
+# Phase 1 — Manual Overrides System — Build Plan (version-of-record)
 
 **Created:** 2026-05-02
+**Refined:** 2026-05-02 via `/ultraplan` cloud review
 **Branch:** `claude/beautiful-villani-8d84a8`
-**Purpose of this doc:** self-contained context bundle for `/ultraplan` review. Contains both source-of-truth monday.com docs in full, the current repo shape, and a proposed Phase 1 gameplan for the multi-agent review to refine before execution. Reading this doc end-to-end should give a fresh agent everything needed to evaluate the plan without external lookups.
+**Status:** Plan approved. Ready for execution.
 
-**What /ultraplan should produce:** a refined Phase 1 build plan with sequencing, risk callouts, and answers (or framed tradeoffs) for the open questions at the bottom. Not code.
+**Purpose of this doc:** version-of-record for the Phase 1 build of the Manual Overrides System. Contains both source-of-truth monday.com docs in full, the current repo shape, and the refined build plan with sequencing, task-by-task estimates, and verification criteria. The strawman that was input to `/ultraplan` lives in git history at commit `d265bae`; this doc supersedes it.
+
+**Execution venue:** desktop Claude Code, running in this worktree (`claude/beautiful-villani-8d84a8`). Do not attempt execution in `/ultraplan`'s cloud session — by design, /ultraplan is plan-in-cloud, execute-in-terminal.
 
 ---
 
 ## How to read this doc
 
 1. Section A — **Source Document 1**: rolling handoff doc, full content. Most recent state at the bottom (Session log — 2026-05-02).
-2. Section B — **Source Document 2**: design spec for the Manual Overrides System, full content. Phase 1 enhancements section at the bottom is highest-leverage for this review.
+2. Section B — **Source Document 2**: design spec for the Manual Overrides System, full content. Phase 1 enhancements section at the bottom is highest-leverage for build sequencing.
 3. Section C — **Current repo context**: file paths, function locations, commit state.
-4. Section D — **Proposed Phase 1 gameplan**: the strawman to review.
-5. Section E — **Open questions for /ultraplan**.
-6. Section F — **Out of scope**: what NOT to do in Phase 1 (Phase 2/3/4 items).
+4. Section D — **Refined build plan**: post-/ultraplan version-of-record. Sequencing, decisions on the 8 open questions, prereqs and risks, ordered task list with effort estimates, verification.
+5. Section E — **Triage notes**: things flagged during the Chris+Claude review of /ultraplan's output, captured here so they aren't lost in execution.
+6. Section F — **Out of scope**: what NOT to do in Phase 1 (Phase 2/3/4 items). Confirmed correct by /ultraplan review.
 
 ---
 
@@ -778,53 +781,193 @@ Tonight required a separate hand-update pass to fix these for 5 jobs after `--ex
 
 ---
 
-## Section D — Proposed Phase 1 gameplan (strawman for review)
+## Section D — Refined build plan (post-/ultraplan, version-of-record)
 
-Two tracks. Track A is planner correctness fixes that don't depend on the new board. Track B is the original Phase 1 scope: board + read-and-validate pipeline. Track A is sequenced before Track B because the consistency validator in Track B needs `computeWindows()` to be correct first; otherwise we're building validation on top of broken cycle math.
+### D.0 Context
 
-### Track A — Planner correctness (no board yet)
+The current schedule-rebalance workflow routes every per-week tweak through Chris → Claude → Claude Code → JSON edit → `--plan` → visualizer → `--execute`. Slow, single-operator, untestable mid-week. The locked design moves per-week pinning onto a monday Manual Overrides board so Bob (and any future production coordinator) can drive it.
 
-| # | Item | Spec ref | Why first | Risk |
+Phase 1's scope is bounded: **board exists, planner reads it, validation works, schema is proven, Chris still triggers runs from Claude Code.** Outputs (Capacity View regen, Weekly Briefing), automation (Saturday cron, polling), and cloud migration are all later phases.
+
+Two complications shape Phase 1's sequencing:
+
+1. The 2026-05-02 rebalance surfaced 7 planner-correctness issues (notably a finishing-cycle bug in `computeWindows()`). These don't depend on the new board, but the override consistency-validator needs `computeWindows()` to be correct or it will validate against broken cycle math. So planner correctness lands first.
+2. `rebalance-schedule.js` is a 1,319-line single-closure script with side effects at module load (token check on line 25, top-level IIFE on line 1311). To plug a board reader and a validation pipeline in cleanly, the entry-point `plan()` and `execute()` need to be exposed as callable functions. That refactor is invasive but mechanical — once.
+
+### D.1 Refined sequencing — two tracks, partial overlap
+
+**Track A** (planner-correctness, no board) merges to main as small independently-revertable PRs. **Track B** (board + read-and-validate pipeline) lives on a feature branch off main and squashes in at the end. Track B can start once **A1 + A2 + A4** are merged; A3, A5, A6 can run concurrently with B (revising the strawman, which had A fully serialized before B).
+
+```mermaid
+flowchart LR
+    subgraph TrackA["Track A — planner correctness (PRs to main)"]
+        A1[A1: dynamic endWeek]
+        A2[A2: finishing-cycle integrity]
+        A2v[A2v: diff vs iter-8 baseline]
+        A4[A4: parent-row validation]
+        A3[A3: pre-execute validation + --force]
+        A5[A5: executor writes finishDrop/Return]
+        A6[A6: clean-stale-subitems utility]
+        A1 --> A2 --> A2v --> A4
+        A2 -.-> A3
+        A2 -.-> A5
+    end
+
+    subgraph TrackB["Track B — Manual Overrides board (feature branch, squash)"]
+        B1[B1: create board on monday]
+        B3[B3: refactor → callable runPlan]
+        B4[B4: loadOverridesBoard reader]
+        B5[B5: validation pipeline — two-pass]
+        B6[B6: writeback row status]
+        B7[B7: 5-7 row smoke matrix]
+        B1 --> B4
+        B3 --> B4 --> B5 --> B6 --> B7
+    end
+
+    A4 --> B3
+    A2v --> B5
+```
+
+Track A's solid arrows are hard prerequisites; dotted are logical follow-ups that don't gate. Track B's B3 (refactor) waits on A1+A2+A4 because the refactor is easier on top of the fixed planner — otherwise we'd refactor twice.
+
+### D.2 Decisions on the 8 open questions
+
+**E1. Track sequencing.** Soften full serialization. **A1 + A2 + A4 are hard preconditions** for Track B (consistency validator and parent-row auto-create both depend on them). A3, A5, A6 can land in parallel with B work. A2v (the iter-8 diff) is a verification step, not a code change — block A2 merge on it but don't block B.
+
+**E2. `run-planner.js` shape.** **Refactor `rebalance-schedule.js` to expose callable `runPlan({ overrides, mode, forceAssignments })`**, not a thin shell-out wrapper. Three reasons: (a) the validation pipeline needs to invoke `plan()` twice (baseline pass + final pass with accepted overrides) — shelling out twice means re-reading every monday board twice, which is the slow part; (b) Phase 2 outputs (Capacity View regen, Weekly Briefing) need direct access to the in-memory plan object, not a JSON file round-trip; (c) the CLI entry-point stays via `if (require.main === module)` so existing `--plan`/`--execute` invocations from `run-scheduler.bat` keep working unchanged. Refactor cost is real but one-time; shell-out cost compounds across phases.
+
+**E3. Validation pipeline placement.** **Sibling module `scripts/validate-overrides.js`**, matching the precedent of `scripts/validate-cross-training.js`. Imports helpers from `rebalance-schedule.js` (`computeWindows`, `parseISO`, etc.) once those are exported. Keeps `run-planner.js` orchestration-only.
+
+**E4. Atomicity model for Crew Allocation overwrite.** **Defer to Phase 2.** Phase 1 only writes back to the Manual Overrides board (per-row `Status` / `Conflict Reason` / `Last Run`), where per-item `change_multiple_column_values` is fine. The Crew Allocation overwrite atomicity question matters when outputs are wired in Phase 2 — settling it now would be premature optimization without the failure modes in front of us.
+
+**E5. A2 risk surface — validation bar.** **Diff `--plan` JSON output before/after A2 against the live iter-8 baseline.** No richer test harness needed for Phase 1. Process: snapshot `logs/rebalance-plan-2026-05-02.json` (or whichever iter-8 file is on disk), apply A2, re-run `--plan`, diff `placements` and `capacityGrid` arrays. Anything other than expected finishing-cycle gap corrections (Quince, Liz Stapp, SHI Huntington, McMorris) is a regression. Worth scripting the diff as `scripts/diff-plans.js` if it'll be re-used in B5/B7.
+
+**E6. A4 implementation choice.** **Fail loud with a clear list, plus an opt-in `--auto-create-parents` flag.** Auto-create-with-loud-log (the strawman's middle ground) is the right behavior eventually, but only after Phase 3 lands audit logging and notification surfaces. In Phase 1 the planner runs interactively from Claude Code — Chris can eyeball the missing-parent list and re-run with the flag. Default-on auto-creation in an unattended Phase 3 run is exactly the failure mode that creates orphan items nobody notices for months.
+
+**E7. Smoke test cardinality (B7).** **5–7 rows covering each override shape**, not 3 (under-tests) and not 10+ (over-engineers a schema-proving phase). Specifically:
+- 1 pure assign (empty From) — exercises "create new placement"
+- 1 pure clear (empty To) — exercises "remove placement"
+- 1 cross-week move (e.g. Ian→Spencer 5/4 mirroring an iter-7 override)
+- 2 split rows for the same (job × station × week)
+- 1 strict customWindow conflict (To Week > delivery date)
+- 1 capacity over-cap WITHOUT `Allow Over-Cap` (expect Conflict)
+- 1 capacity over-cap WITH `Allow Over-Cap` (expect Applied + soft warning)
+
+Skip consistency-fail testing initially — that requires constructing a phantom From-side state, which is awkward without the planner already running. Add it as a B7 follow-up after the basics pass.
+
+**E8. JSON-vs-board cutover during Phase 1.** **Read from BOTH; board wins on conflict; log when both target the same primitive.** The spec's "fresh start, no backfill" applies to migration intent, not Phase 1 operation. Existing JSON `forceAssignments` are still active and bound to specific weeks — they age out naturally over 4–6 weeks. Hard-cutting at Phase 1 ship would either (a) require backfilling all live JSON forces to the board, contradicting the spec, or (b) lose live overrides. Merge by union, board takes precedence on the (jobId × station × week × crew) tuple if the same primitive appears in both. Log every conflict.
+
+### D.3 Missing prerequisites and risks
+
+**Test harness gap.** Repo has zero automated tests. Phase 1 ships meaningful planner-math changes (A2) and a new validation pipeline (B5). Mitigation: build a `scripts/diff-plans.js` JSON differ as part of A2v — reusable in B5 for "consistency validator behaves the way we expect on this fixture" and in B7 for smoke-test verification. Don't try to add a Jest/Mocha framework in Phase 1; just a node script that reads two plan JSONs and reports placement-set differences.
+
+**`MONDAY_API_TOKEN` early-exit.** Lines 23–28 of `rebalance-schedule.js` `process.exit(1)` at module load if no token. Fine for CLI use, but blocks unit-style testing of pure functions like `computeWindows()`. B3's refactor should move the token check inside `runPlan()` (or a `loadAll()` data-fetching function) so the helpers can be imported without a live token.
+
+**Master PM "customWindow" terminology in spec is loose.** The validator calls for "Master PM customWindow check." But customWindow currently lives in `config/rebalance-overrides.json`, not on Master PM. Master PM has a delivery date; the PL board has `windowEng`/`windowPanel`/etc. columns (`week_mm26ywqt` and friends, lines 73–78) that are unread today. Recommend implementing this validation check as **delivery-date strict**: `toWeek + stationDuration + (finishingDays if downstream of finish cycle) ≤ deliveryDate`. Treat the spec wording as shorthand for "the job's planning constraint." Flag explicitly in B5.
+
+**From/To Crew schema redundancy.** Spec column 4 (From Crew) is `board_relation → Crew Allocation parents`, which yields entries like "Ian — week of 4/27" — but column 5 (From Week) is also captured separately. Pick a parent and the From Week is implied; the redundancy lets a user enter inconsistent combinations. Schema is locked, so live with it: validator must coerce and reject (From Crew parent-row's week ≠ From Week column). One-line check, but worth catching at validation time, not silently accepting and writing the wrong thing back.
+
+**Two-pass planner cost.** Validation pipeline runs `plan()` twice: once for baseline (no board overrides), once for final (with accepted overrides). Each pass currently fetches every monday board fresh. **Fix: separate `loadAll()` (fetches once, returns boards object) from `runPlan(boards, overrides)` (pure)**. Phase 1 absorbs this; pays off again in Phase 2.
+
+**Risk: A2 changes window math for every non-pLam job.** Beyond the iter-8 diff, the failure mode to watch is the auto-cycle math producing windows that *previously worked by accident* now landing differently. McMorris is the safest test case (already had a manual customWindow override); compare its window output before/after A2 with the customWindow temporarily removed.
+
+**Risk: monday board automation lag.** Native automations (auto-stale on past week, status-driven group transition) have no guaranteed latency. If the planner runs before automation fires, a stale row could re-validate and re-apply. Mitigation: validator filters Active group by week — a row whose To Week (or From Week, when no To) is in the past gets ignored regardless of group. Belt and suspenders.
+
+### D.4 Final ordered task list
+
+Effort estimates assume one focused person; multiply by 1.5 for context-switch overhead.
+
+#### Track A — planner correctness (PRs to main)
+
+| # | Task | File(s) | Effort | Notes |
 |---|---|---|---|---|
-| A1 | Dynamic `endWeek` | enhancement #7 | Smallest, isolated, unblocks horizon extension | None |
-| A2 | Finishing cycle integrity in `computeWindows()` | enhancement #1 | Foundational; current cycle math wrong for non-pLam jobs | Medium — affects every plan |
-| A3 | Pre-execute validation section + `--force` gate | enhancement #2 | Guards #1 from regressing; surfaces #4's parent-row gap | Low (additive output) |
-| A4 | Auto-create missing crew parent rows at `--plan` start | enhancement #4 | Makes forceAssignments reliable; prerequisite for board-driven forces | Low |
-| A5 | Executor writes Finish Drop / Return back to PL board | enhancement #5 | Closes the hand-update loop; isolated to `execute()` | Low |
-| A6 | `scripts/clean-stale-subitems.js` standalone utility | enhancement #3 | New file, no planner change | Low |
-| A7 | Column rename on PL board | enhancement #6 | Cosmetic; defer or skip | Trivial |
+| A1 | Replace hardcoded `endWeek = '2026-07-27'` with `max(deliveryDates) + 4 weeks` | `rebalance-schedule.js:1087` | 30 min | Smallest. Add a floor of `today + 12 weeks` to handle the empty-jobs edge case. |
+| A2 | Fix `computeWindows()` finishing-cycle math: enforce Pre-Fin end ≤ `addBusinessDays(finishDrop, -1)`; assertion if violated | `rebalance-schedule.js:774–887` | 4–6 hrs | Touches lines 803–810 (drop/return computation) and 820–841 (Pre-Fin window). Add `assertFinishingCycleValid(windows)` called at end of `computeWindows`. |
+| A2v | Diff iter-8 plan vs post-A2 plan; verify only expected non-pLam jobs change windows | new `scripts/diff-plans.js` | 1 hr | Reusable in B5/B7. Compares `placements[]` and `capacityGrid` between two plan JSONs. |
+| A4 | At `plan()` start, validate every (crew × week) in horizon has a parent row; fail loud with list. Add `--auto-create-parents` flag. | `rebalance-schedule.js:1059–1092` | 2 hrs | Auto-create path: 1 GraphQL mutation per missing row to BOARD_CREW_ALLOC. Skip subcontractor virtual-crew. |
+| A3 | Add `=== FINISHING CYCLE VALIDATION ===` section to `--plan` console output. `--execute` refuses to run when any ❌ unless `--force` flag. | `rebalance-schedule.js:1059, 1243` | 2–3 hrs | Pure additive. For each non-pLam job, print Pre-Fin end / `finishingDays` / Post-Fin start / gap / ✓ or ❌. Write summary into the saved plan JSON. |
+| A5 | After subitem creation, write `finishDrop` and `finishReturn` back to PL board columns `date_mm26qqv3` and `date_mm2k17ef`. Clear (null) for pLam jobs. | `rebalance-schedule.js:1243 (execute)` and `:803–810 (windows)` | 1–2 hrs | Plan JSON needs to carry computed dates per active job — extend `report` shape. Then `execute()` does one `change_multiple_column_values` per job after subitem create loop. |
+| A6 | New utility: find subitems whose linked Master PM job has Status=Complete, list them, prompt before delete | new `scripts/clean-stale-subitems.js` | 2–3 hrs | Mirror structure of `validate-cross-training.js`. Stretch: dry-run mode (`DRY_RUN=1`). |
 
-### Track B — Manual Overrides board + read pipeline (original Phase 1)
+**A merge gate to start B:** A1 + A2 + A2v + A4 must be merged before B3 starts. A3, A5, A6 can ship in parallel with B.
 
-| # | Item | Notes |
-|---|---|---|
-| B1 | Create Manual Overrides board on monday | 14 columns, Active/Stale groups, native automations per spec |
-| B2 | Confirm cross-training entry-time filter feasibility | Open question #1; build-or-skip decision |
-| B3 | New `scripts/run-planner.js` entry-point | Decision: thin wrapper that shells out vs. refactor `rebalance-schedule.js` to expose callable function |
-| B4 | Read Active group rows; translate to internal `forceAssignments` | New code path in `getForceAssignments()` or upstream of it |
-| B5 | Validation pipeline | customWindow (strict) → consistency (strict) → capacity (lenient w/ Allow Over-Cap checkbox) |
-| B6 | Write back per-row Status / Conflict Reason / Last Run | monday GraphQL `change_multiple_column_values`; settle atomicity question (open Q #2) |
-| B7 | Smoke test with 3–5 rows mirroring real recent overrides | MAG R5-P2 split, Ian→Spencer 5/4, Quince push; confirm Applied/Conflict matches expectations |
+#### Track B — Manual Overrides board + read pipeline (feature branch → squash to main)
 
-### Branch hygiene proposal
+| # | Task | File(s) | Effort | Notes |
+|---|---|---|---|---|
+| B1 | Create Manual Overrides board on monday: 14 columns per spec, Active/Stale groups, two native automations | (monday UI, no repo change) | 2–3 hrs | Capture board ID + column IDs into `docs/htw-cross-training-matrix.md` Section 13 (existing board-IDs reference). Skip the cross-training entry-time filter — defer to Phase 5 polish. |
+| B3 | Refactor `rebalance-schedule.js`: extract `loadAll()`, `runPlan(boards, overrides)`, `runExecute(plan)`. Move CLI entry into `if (require.main === module)`. Move token check into `loadAll()`. | `rebalance-schedule.js` (broad) | 3–4 hrs | Side-effect-free imports become possible. No behavior change in CLI invocations. Verify by running `node scripts/rebalance-schedule.js --plan` and diffing JSON output before/after refactor (should be byte-identical). |
+| B2 | (skipped) Cross-training entry-time filter feasibility | — | 0 | Recommended skip in Phase 1 per spec wording "build if supported, skip if not." 30-min spike acceptable if curiosity strikes. |
+| B4 | New `loadOverridesBoard()` reader returning Active group rows in normalized shape. Merge into `forceAssignments` consumed by `getForceAssignments()`. Log conflicts where JSON and board both target same `(jobId × station × week × crew)`. | new code in `rebalance-schedule.js` (or `loadAll()` after refactor) and `getForceAssignments` at line 703 | 2–3 hrs | Board wins on conflict (E8). Normalize From/To Crew via the `board_relation → Crew Allocation parents` shape — coerce to `{crewName, weekISO}`. |
+| B5 | New sibling module `scripts/validate-overrides.js`: `validateAll(rows, baselinePlan, masterPmJobs)` runs three checks per row (delivery-date strict, consistency strict vs baseline, capacity lenient w/ `Allow Over-Cap`). Returns `{accepted, conflicts}`. Two-pass driver in `run-planner.js`: pass 1 baseline → validate → pass 2 with accepted forces. | new `scripts/validate-overrides.js`, new `scripts/run-planner.js` | 4–6 hrs | This is the load-bearing piece. Consistency check: does From Crew × From Week × Station have ≥ Hours allocated in baseline plan? Reuse `parseISO` and `getMondayOfWeek` from `rebalance-schedule.js`. |
+| B6 | After validation, write back `Status` (Pending → Applied/Conflict), `Conflict Reason`, `Last Run` per row via `change_multiple_column_values`. | `scripts/run-planner.js` | 2 hrs | Per-row updates, no atomicity concern (Phase 2 problem). Rate-limit to ~150ms between calls (matches `validate-cross-training.js` precedent). |
+| B7 | Manual smoke matrix: enter 5–7 rows in monday Active group, run `node scripts/run-planner.js --plan`, verify each row's expected status (table in D.2/E7 above). | (monday UI + CLI) | 2 hrs | Iterate until each shape behaves correctly. Capture findings inline in this doc as a new section "B7 results — YYYY-MM-DD". |
+| B8 | End-to-end dry-run with both JSON `forceAssignments` and board overrides active. Confirm conflict logging fires when both target same primitive; confirm board wins. | (CLI) | 1–2 hrs | Use a real iter-8 forceAssignment (e.g., Spencer Edge Optics 5/4) and create a competing board row for the same primitive. |
 
-- Track A items each ship as small PRs to main as they land (independently revertable).
-- Track B lives on a feature branch off main once Track A's foundational pieces (A1 + A2 + A4 at minimum) are merged. Squash-merge Track B at the end of Phase 1.
+#### Total estimate
+
+Track A: ~12–17 hrs
+Track B: ~14–20 hrs
+**Phase 1 total: 26–37 hrs of focused work** — realistically two to three weekends.
+
+### D.5 Verification — how to confirm Phase 1 is done
+
+End-to-end test sequence after B7+B8 land:
+
+1. **Track A regression check.** Run `node scripts/rebalance-schedule.js --plan` against current monday state. Confirm: (a) endWeek extends past Atom Computing's 8/08 delivery automatically; (b) `=== FINISHING CYCLE VALIDATION ===` section appears with all ✓ for non-pLam jobs (Quince, Liz Stapp, SHI, McMorris, Gilbert); (c) any missing parent rows are listed and execution refuses without `--auto-create-parents`.
+2. **Track A executor write-back.** Run `--execute` on a small test plan; verify `date_mm26qqv3` (Finish Drop) and `date_mm2k17ef` (Finish Return) on PL board are populated for all non-pLam jobs and cleared for pLam jobs. Spot-check Quince and BCH.
+3. **Track B board read.** Enter the 7 smoke rows in monday Active group. Run `node scripts/run-planner.js --plan`. Verify each row's Status flipped to expected value (Applied or Conflict), Conflict Reason populated where Conflict, Last Run timestamped. Re-fetch the rows and confirm via monday UI, not just script logs.
+4. **Track B JSON+board coexistence.** With current `rebalance-overrides.json` `forceAssignments` still active, confirm planner output still matches iter-8 placements (those forces still apply). Add a board row that conflicts with one of them; confirm the board row wins and a conflict log line appears.
+5. **End-to-end determinism.** Run `--plan` twice in a row with no board changes. Diff the two plan JSONs via `scripts/diff-plans.js` — should be empty (placements are deterministic given inputs).
+
+Phase 1 is done when all five pass and the spec's locked end-state holds: **board exists, planner reads it, validation works, schema is proven, Chris still triggers runs from Claude Code.**
+
+### D.6 Critical files reference
+
+- `scripts/rebalance-schedule.js` — main planner, target of A1/A2/A3/A4/A5 and B3/B4
+  - Line 30: MODE flag
+  - Line 36: OVERRIDES_PATH
+  - Line 56–60: board IDs
+  - Line 79–80: PL board finishDrop/finishReturn columns (A5 target)
+  - Line 149: BOB_START_DATE
+  - Line 703: `getForceAssignments` (B4 merge point)
+  - Line 717: `applyForceAssignments`
+  - Line 774–887: `computeWindows` (A2 target)
+  - Line 803–810: finish drop/return computation (A2 + A5)
+  - Line 820–841: Pre-Fin end target (A2 core fix)
+  - Line 948: `scheduleStation`
+  - Line 1059: `plan()` entry (A3, A4, B3)
+  - Line 1087: hardcoded endWeek (A1)
+  - Line 1243: `execute()` (A5, B3)
+- `config/rebalance-overrides.json` — structural config + fading per-week pinning during cutover
+- `scripts/validate-cross-training.js` — sibling-validator precedent for B5 module shape
+- `run-scheduler.bat` / `run-daily-rollups.bat` — Task Scheduler precedents (informs Phase 3, not Phase 1)
+- new `scripts/run-planner.js` — Phase 1 orchestration entry
+- new `scripts/validate-overrides.js` — Phase 1 validation pipeline
+- new `scripts/diff-plans.js` — JSON plan differ for verification (A2v reusable)
+- new `scripts/clean-stale-subitems.js` — A6 utility
 
 ---
 
-## Section E — Open questions for /ultraplan
+## Section E — Triage notes
 
-Things the multi-agent review should explicitly weigh in on:
+Three items flagged during the review of `/ultraplan`'s output, captured here so they aren't lost during execution.
 
-1. **Track sequencing.** Does Track A really need to fully land before Track B starts, or are A1+A2+A4 sufficient preconditions? Could A3/A5/A6 run concurrently with B?
-2. **`run-planner.js` shape.** Thin wrapper that shells out to `rebalance-schedule.js` (cheap, preserves existing CLI) vs. refactor to expose a callable `runPlan({ overrides, mode })` function (cleaner, more testable, more invasive). The spec leans wrapper; assess tradeoffs.
-3. **Validation pipeline placement.** Should validation live inside `run-planner.js` or as a sibling module (`scripts/validate-overrides.js`)? Existing `validate-cross-training.js` is precedent for sibling validators.
-4. **Atomicity model for Crew Allocation overwrite (Phase 2 problem, but relevant now).** Phase 1 doesn't write Crew Allocation, but the design choice affects how `run-planner.js` should be structured. Does it matter to nail down now?
-5. **A2 risk surface.** The finishing cycle fix changes window math for every non-pLam job. What's the right validation bar before merging — does a comparison run against iter-8 plan output suffice, or do we need a richer test harness?
-6. **A4 implementation choice.** Auto-create missing parent rows vs. fail loud with a list. Spec leans auto-create. Concerns: silent creation of monday items if the planner runs unattended in Phase 3. Maybe auto-create-with-loud-log is the right middle ground.
-7. **Smoke test row count for B7.** Three rows feels light; ten feels like over-engineering for a schema-proving phase. What's the right cardinality to be confident the pipeline works?
-8. **Cutover from `forceAssignments` JSON to board.** Spec says fresh start, no backfill. But during Phase 1 testing, the existing JSON forceAssignments are still active. Do we read from BOTH (board + JSON) during Phase 1, with the board winning on conflict? Or do we hard-cut at Phase 1 ship?
+### E.1 A4 default-flip plan (D.2/E6)
+
+The decision to default A4 to "fail loud + opt-in `--auto-create-parents`" is conservative-correct for Phase 1. Revisit when Phase 3 lands audit logging + notification surfaces — flip the default to "auto-create with loud log" then. Add a TODO in the A4 implementation with this note so the trigger condition is captured at the source.
+
+### E.2 B7 consistency-fail follow-up (D.2/E7)
+
+The 7-row smoke matrix intentionally skips a consistency-fail row because constructing a phantom From-side state is awkward without the planner already running. Don't lose this gap: add an 8th row testing consistency rejection once B5 is operational, before declaring B7 done. Verification step #3 already implicitly covers this if executed thoroughly, but make it an explicit smoke row.
+
+### E.3 Effort estimates worth watching
+
+**B3 refactor (3–4 hrs)** is tight. `rebalance-schedule.js` has lots of module-scope state; extracting `loadAll`/`runPlan`/`runExecute` cleanly could blow out to 6–8 hrs if there are hidden coupling issues (e.g., closures over `OVERRIDES`, mutable globals shared across `plan()` and `execute()`). Plan for the upper bound. If B3 blows past 8 hrs, stop and triage — the right move may be a more surgical refactor (e.g., extract only `loadAll()` first, leave `plan()`/`execute()` mostly as-is) rather than the full callable-function shape.
+
+**B5 (4–6 hrs)** is also tight. Validation pipeline + two-pass orchestration + writeback formatting is meaty. Watch for scope creep — especially the temptation to add more validation checks than the three the spec calls for.
+
+Total Phase 1 range 26–37 hrs is plausible; plan for the upper bound.
 
 ---
 
