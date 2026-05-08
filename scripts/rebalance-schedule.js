@@ -1081,11 +1081,26 @@ async function plan() {
   // Sort jobs by delivery date ascending (soonest first gets priority)
   activeJobs.sort((a, b) => (a.delivery || 'Z').localeCompare(b.delivery || 'Z'));
 
-  // Planning window: this week through end of July
+  // Planning window: this week through 4 weeks past the last delivery (or 12 weeks out, whichever is further).
+  // A1: dynamic horizon — replaces previously hardcoded `'2026-07-27'`. Removes the manual maintenance burden
+  // of bumping endWeek every time a job has a far-future delivery (Atom Computing 8/08 forced the last edit).
   const today = new Date();
   const startWeek = toISO(getMondayOfWeek(today));
-  const endWeek = '2026-07-27';
+
+  const deliveryDates = activeJobs.map(j => j.delivery).filter(Boolean);
+  const maxDelivery = deliveryDates.length > 0
+    ? deliveryDates.reduce((m, d) => d > m ? d : m)
+    : null;
+  const horizonFromDeliveries = maxDelivery
+    ? toISO(getMondayOfWeek(addDays(parseISO(maxDelivery), 28)))
+    : null;
+  const horizonFloor = toISO(getMondayOfWeek(addDays(today, 84)));
+  const endWeek = horizonFromDeliveries && horizonFromDeliveries > horizonFloor
+    ? horizonFromDeliveries
+    : horizonFloor;
+
   const weeks = getWeekList(startWeek, endWeek);
+  console.log(`Planning horizon: ${startWeek} → ${endWeek} (${weeks.length} weeks${maxDelivery ? `, max delivery ${maxDelivery}` : ', no active jobs — using 12-week floor'})`);
 
   // Build set of Master PM IDs for active jobs (their subitems will be deleted/rescheduled)
   const activeJobMasterPmIds = new Set(activeJobs.map(j => j.masterPmId).filter(Boolean));
