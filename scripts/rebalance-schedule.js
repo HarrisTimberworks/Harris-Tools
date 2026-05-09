@@ -791,14 +791,14 @@ function computeWindows(job) {
     }
   }
 
-  // Finish cycle (only if Finishing Days > 0 and not P-Lam)
-  // Anchor: Friday of Post Fin first week (preserves existing window placement).
-  // Drop = N business days back from anchor; Return = Drop + N business days
-  // (forward business-day arithmetic per spec — equals anchor by inverse property).
+  // A2: Finish cycle (only if Finishing Days > 0 and not P-Lam).
+  // Anchor: Finish Return must land on or before the Monday Post-Fin starts —
+  // operationally the finisher returns cabs the Friday before Post-Fin week.
+  // Drop = N business days back from Return anchor.
   let finishDrop = null, finishReturn = null;
   if (job.finishingDays > 0 && !job.pLam) {
-    const finishReturnRef = job.hours.postfin > 0 ? (windows.postfin?.start || deliveryWeek) : deliveryWeek;
-    const provisionalReturn = toISO(addDays(parseISO(finishReturnRef), 4));
+    const postfinAnchor = job.hours.postfin > 0 ? (windows.postfin?.start || deliveryWeek) : deliveryWeek;
+    const provisionalReturn = toISO(addDays(parseISO(postfinAnchor), -3));
     finishDrop = businessDaysBack(provisionalReturn, job.finishingDays);
     finishReturn = addBusinessDays(finishDrop, job.finishingDays);
     windows.finishDrop = finishDrop;
@@ -812,8 +812,12 @@ function computeWindows(job) {
       windows.prefin = job.customWindow.prefin;
       prefinStartWeek = windows.prefin.start;
     } else {
+      // A2: Pre-Fin end must land in the week BEFORE finishDrop's week so the
+      // last Friday of pre-fin work is at least 1 business day before pickup.
+      // -7 calendar days lands somewhere in the prior week regardless of the
+      // weekday finishDrop falls on; getMondayOfWeek then snaps to that Monday.
       const prefinEndTarget = finishDrop
-        ? toISO(addDays(parseISO(finishDrop), -1))
+        ? toISO(addDays(parseISO(finishDrop), -7))
         : (job.hours.postfin > 0
             ? toISO(addDays(parseISO(windows.postfin.start), -3))
             : toISO(addDays(parseISO(deliveryWeek), -3)));
@@ -834,7 +838,7 @@ function computeWindows(job) {
       const benchEndRef = prefinStartWeek
         ? toISO(addDays(parseISO(windows.prefin.end), 0))
         : (finishDrop
-            ? toISO(addDays(parseISO(finishDrop), -1))
+            ? toISO(addDays(parseISO(finishDrop), -7))
             : (job.hours.postfin > 0
                 ? toISO(addDays(parseISO(windows.postfin.start), -3))
                 : toISO(addDays(parseISO(deliveryWeek), -3))));
@@ -878,7 +882,38 @@ function computeWindows(job) {
     }
   }
 
+  assertFinishingCycleValid(job, windows);
   return windows;
+}
+
+// A2: throws if the finishing cycle leaves zero days for the finisher.
+// Applies to non-pLam jobs with finishingDays > 0 — both auto-computed windows
+// and user-supplied customWindow placements (a violating customWindow means the
+// override itself is operationally invalid and needs the user to fix it).
+function assertFinishingCycleValid(job, windows) {
+  if (job.pLam || !job.finishingDays || job.finishingDays <= 0) return;
+  if (!windows.finishDrop || !windows.finishReturn) return;
+
+  if (windows.prefin) {
+    const prefinEndPlus1 = addBusinessDays(windows.prefin.end, 1);
+    if (prefinEndPlus1 > windows.finishDrop) {
+      throw new Error(
+        `[finishing-cycle] ${job.name}: Pre-Fin ends ${windows.prefin.end} ` +
+        `(next BD ${prefinEndPlus1}) but Finish Drop is ${windows.finishDrop} — ` +
+        `pre-fin would still be in progress when finisher arrives. ` +
+        `Push delivery date or relax customWindow.prefin.`
+      );
+    }
+  }
+  if (windows.postfin) {
+    if (windows.finishReturn > windows.postfin.start) {
+      throw new Error(
+        `[finishing-cycle] ${job.name}: Finish Return ${windows.finishReturn} > ` +
+        `Post-Fin start ${windows.postfin.start} — finisher hasn't returned cabs ` +
+        `before assembly is supposed to begin. Push delivery date or relax customWindow.postfin.`
+      );
+    }
+  }
 }
 
 /**

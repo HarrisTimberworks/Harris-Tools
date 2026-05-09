@@ -56,12 +56,10 @@
     },
     "11693177783": {
       "name": "F&B - Quince Ave",
-      "note": "Full job. Delivery 5/26 (Tue). Pulled 1 week forward via force + BCH sub to free tail before Memorial Day.",
+      "note": "Full job. Delivery 5/26 (Tue). Pulled 1 week forward via force + BCH sub to free tail before Memorial Day. A2: removed customWindow.prefin/postfin (workaround for pre-A2 broken finishing-cycle math); auto-cycle math now produces valid windows. customWindow.bench retained as it pins the explicit pull-forward.",
       "remainingHours": null,
       "customWindow": {
-        "bench":   { "start": "2026-05-11", "end": "2026-05-11" },
-        "prefin":  { "start": "2026-05-11", "end": "2026-05-11" },
-        "postfin": { "start": "2026-05-18", "end": "2026-05-18" }
+        "bench":   { "start": "2026-05-11", "end": "2026-05-11" }
       }
     },
     "11693166564": {
@@ -152,23 +150,7 @@
       "stations": ["Benchwork"],
       "week": "2026-05-11",
       "hours": 7,
-      "reason": "Quince pulled 1 week forward to give finisher + PostFin breathing room before Tue 5/26 firm delivery"
-    },
-    {
-      "crew": "Spencer",
-      "jobId": "11693177783",
-      "stations": ["Pre Fin Cab Assembly"],
-      "week": "2026-05-11",
-      "hours": 12,
-      "reason": "Quince pulled 1 week forward to give finisher + PostFin breathing room before Tue 5/26 firm delivery"
-    },
-    {
-      "crew": "Bob",
-      "jobId": "11693177783",
-      "stations": ["Post Fin Cab Assembly"],
-      "week": "2026-05-18",
-      "hours": 6.2,
-      "reason": "Quince PostFin pulled 1 week forward to complete before Tue 5/26 delivery; avoids Memorial Day crunch"
+      "reason": "Pin Quince Benchwork to Spencer week of 5/11 — operational commitment for the week, independent of the finishing cycle (matches customWindow.bench)"
     },
     {
       "crew": "Spencer",
