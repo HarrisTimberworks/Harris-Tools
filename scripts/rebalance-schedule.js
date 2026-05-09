@@ -23,6 +23,7 @@ const API_URL = 'https://api.monday.com/v2';
 const TOKEN = process.env.MONDAY_API_TOKEN;
 
 const MODE = process.argv.includes('--execute') ? 'execute' : 'plan';
+const AUTO_CREATE_PARENTS = process.argv.includes('--auto-create-parents');
 
 // ============================================================================
 // LOAD OVERRIDES CONFIG
@@ -1132,6 +1133,46 @@ async function plan() {
   const weeks = getWeekList(startWeek, endWeek);
   console.log(`Planning horizon: ${startWeek} → ${endWeek} (${weeks.length} weeks${maxDelivery ? `, max delivery ${maxDelivery}` : ', no active jobs — using 12-week floor'})`);
 
+  // A4: validate every (crew × week) in the horizon has a parent row on the
+  // Crew Allocation board. Without this, forces silently skip when a parent is
+  // missing (the bug that took 8 plan iterations on 2026-05-02). Skip subcontractor
+  // virtual-crew (no parent rows by design) and Bob pre-BOB_START_DATE.
+  const subcontractorNames = new Set();
+  for (const subs of Object.values(OVERRIDES.subcontractors || {})) {
+    for (const s of subs) subcontractorNames.add(s.name);
+  }
+  const missingParents = findMissingCrewParents({
+    crewParents,
+    weeks,
+    crews: Object.keys(CREW_BASE_HOURS),
+    subcontractorNames,
+    crewStartDates: { Bob: BOB_START_DATE },
+  });
+  if (missingParents.length > 0) {
+    if (AUTO_CREATE_PARENTS) {
+      console.log(`\n=== AUTO-CREATING ${missingParents.length} CREW PARENT ROW(S) ===`);
+      const created = await autoCreateCrewParents(missingParents, gql);
+      for (const c of created) {
+        console.log(`  ✓ Created parent row for ${c.crew} @ ${c.week} (id=${c.id})`);
+        crewParents.push({
+          parentId: c.id,
+          week: c.week,
+          crew: c.crew,
+          base: CREW_BASE_HOURS[c.crew] ?? 0,
+          timeOff: 0,
+          nonProd: 0,
+        });
+      }
+    } else {
+      console.error(`\n❌ Missing ${missingParents.length} required Crew Allocation parent row(s):`);
+      for (const m of missingParents) {
+        console.error(`  - ${m.crew} @ week of ${m.week}`);
+      }
+      console.error(`\nFix manually on the Crew Allocation board, OR rerun with --auto-create-parents.`);
+      process.exit(1);
+    }
+  }
+
   // Build set of Master PM IDs for active jobs (their subitems will be deleted/rescheduled)
   const activeJobMasterPmIds = new Set(activeJobs.map(j => j.masterPmId).filter(Boolean));
   const grid = buildCapacityGrid(crewParents, timeOff, weeks, existingSubs, activeJobMasterPmIds);
@@ -1350,6 +1391,79 @@ async function execute() {
 }
 
 // ============================================================================
+// A4 — CREW PARENT ROW VALIDATION
+// ============================================================================
+
+// Pure: given the parent rows fetched from Crew Allocation, the planning-horizon
+// week list, and the crew roster, return every (crew × week) pair that lacks a
+// parent row. Skips:
+//   - subcontractor virtual-crew (no parent rows by design — they're injected
+//     into the capacity grid for one week only via OVERRIDES.subcontractors)
+//   - any (crew, week) pair where week < crewStartDates[crew]
+//     (e.g., Bob pre-2026-05-18 — subcontract-only before then)
+function findMissingCrewParents({
+  crewParents,
+  weeks,
+  crews,
+  subcontractorNames = new Set(),
+  crewStartDates = {},
+}) {
+  const present = new Set();
+  for (const cp of crewParents) {
+    present.add(`${cp.crew}|${cp.week}`);
+  }
+  const missing = [];
+  for (const crew of crews) {
+    if (subcontractorNames.has(crew)) continue;
+    const startDate = crewStartDates[crew];
+    for (const week of weeks) {
+      if (startDate && week < startDate) continue;
+      if (!present.has(`${crew}|${week}`)) {
+        missing.push({ crew, week });
+      }
+    }
+  }
+  return missing;
+}
+
+// Fires one create_item mutation per missing entry against BOARD_CREW_ALLOC.
+// gqlFn is injected so tests can stub without hitting live monday.
+//
+// TODO(phase 3): when audit logging + notification surfaces land (see
+// docs/phase-1-manual-overrides-plan.md §E.1), flip plan() default to
+// "auto-create with loud log" and remove the --auto-create-parents opt-in.
+async function autoCreateCrewParents(missing, gqlFn, opts = {}) {
+  const boardId = opts.boardId ?? BOARD_CREW_ALLOC;
+  const baseHoursMap = opts.baseHours ?? CREW_BASE_HOURS;
+  const personIdMap = opts.personIds ?? CREW_PERSON_ID;
+  const peopleColId = opts.peopleColId ?? 'multiple_person_mm2kr7ky';
+
+  const mutation = `mutation($boardId: ID!, $itemName: String!, $columnValues: JSON!) {
+    create_item(board_id: $boardId, item_name: $itemName, column_values: $columnValues) { id }
+  }`;
+
+  const created = [];
+  for (const m of missing) {
+    const [, mm, dd] = m.week.split('-');
+    const itemName = `${m.crew} — Week of ${mm}/${dd}`;
+    const cv = {
+      [COL_CA.weekDate]: { date: m.week },
+      [COL_CA.baseHours]: baseHoursMap[m.crew] ?? 0,
+    };
+    if (personIdMap[m.crew]) {
+      cv[peopleColId] = { personsAndTeams: [{ id: personIdMap[m.crew], kind: 'person' }] };
+    }
+    const res = await gqlFn(mutation, {
+      boardId: String(boardId),
+      itemName,
+      columnValues: JSON.stringify(cv),
+    });
+    created.push({ crew: m.crew, week: m.week, id: res?.create_item?.id ?? null });
+  }
+  return created;
+}
+
+// ============================================================================
 // EXPORTS — pure helpers + computeWindows callable from tests / sibling modules
 // without triggering CLI entry. CLI invocations (require.main === module) keep
 // the original token check + IIFE.
@@ -1364,6 +1478,9 @@ module.exports = {
   businessDaysBack,
   getMondayOfWeek,
   weeksCountForHours,
+  findMissingCrewParents,
+  autoCreateCrewParents,
+  BOARD_CREW_ALLOC,
 };
 
 // ============================================================================
