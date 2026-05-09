@@ -1326,15 +1326,29 @@ async function plan() {
 // EXECUTE MODE — applies the most recent plan
 // ============================================================================
 
+// Returns the basename of the most-recent rebalance-plan-*.json in logsDir,
+// or null if none exists. Filter requires literal `.json` suffix so stray
+// `.bak` / `.tmp` / `.old` siblings can't outrank the canonical file in
+// reverse-sorted order. See 2026-05-10 incident commit body for the bug
+// this prevents — a `.bak` file in logs/ caused execute() to load stale
+// data and start deleting subitems before TaskStop fired.
+function findLatestPlanFile(logsDir) {
+  const files = fs.readdirSync(logsDir)
+    .filter(f => f.startsWith('rebalance-plan-') && f.endsWith('.json'))
+    .sort()
+    .reverse();
+  return files.length > 0 ? files[0] : null;
+}
+
 async function execute() {
   console.log('=== HTW Rebalancer — EXECUTE mode ===');
   const logsDir = path.join(__dirname, '..', 'logs');
-  const files = fs.readdirSync(logsDir).filter(f => f.startsWith('rebalance-plan-')).sort().reverse();
-  if (files.length === 0) {
+  const fname = findLatestPlanFile(logsDir);
+  if (!fname) {
     console.error('No plan file found. Run with --plan first.');
     process.exit(1);
   }
-  const planFile = path.join(logsDir, files[0]);
+  const planFile = path.join(logsDir, fname);
   console.log(`Loading plan: ${planFile}`);
   const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
   console.log(`Plan generated: ${plan.generatedAt}`);
@@ -1481,6 +1495,7 @@ module.exports = {
   findMissingCrewParents,
   autoCreateCrewParents,
   BOARD_CREW_ALLOC,
+  findLatestPlanFile,
 };
 
 // ============================================================================
