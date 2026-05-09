@@ -24,6 +24,7 @@ const TOKEN = process.env.MONDAY_API_TOKEN;
 
 const MODE = process.argv.includes('--execute') ? 'execute' : 'plan';
 const AUTO_CREATE_PARENTS = process.argv.includes('--auto-create-parents');
+const FORCE = process.argv.includes('--force');
 
 // ============================================================================
 // LOAD OVERRIDES CONFIG
@@ -887,20 +888,22 @@ function computeWindows(job) {
   return windows;
 }
 
-// A2: throws if the finishing cycle leaves zero days for the finisher.
-// Applies to non-pLam jobs with finishingDays > 0 — both auto-computed windows
-// and user-supplied customWindow placements (a violating customWindow means the
-// override itself is operationally invalid and needs the user to fix it).
-function assertFinishingCycleValid(job, windows) {
-  if (job.pLam || !job.finishingDays || job.finishingDays <= 0) return;
-  if (!windows.finishDrop || !windows.finishReturn) return;
-
+// A2/A3: pure non-throwing check. Returns { valid, errors[] }. Used by both
+// assertFinishingCycleValid (compute-time defense) and the A3 reporting path.
+// Skips pLam / zero-finishing / missing-window cases as valid (no constraint).
+function checkFinishingCycleValid(job, windows) {
+  const errors = [];
+  if (!job || job.pLam || !job.finishingDays || job.finishingDays <= 0) {
+    return { valid: true, errors };
+  }
+  if (!windows || !windows.finishDrop || !windows.finishReturn) {
+    return { valid: true, errors };
+  }
   if (windows.prefin) {
     const prefinEndPlus1 = addBusinessDays(windows.prefin.end, 1);
     if (prefinEndPlus1 > windows.finishDrop) {
-      throw new Error(
-        `[finishing-cycle] ${job.name}: Pre-Fin ends ${windows.prefin.end} ` +
-        `(next BD ${prefinEndPlus1}) but Finish Drop is ${windows.finishDrop} — ` +
+      errors.push(
+        `Pre-Fin ends ${windows.prefin.end} (next BD ${prefinEndPlus1}) but Finish Drop is ${windows.finishDrop} — ` +
         `pre-fin would still be in progress when finisher arrives. ` +
         `Push delivery date or relax customWindow.prefin.`
       );
@@ -908,13 +911,90 @@ function assertFinishingCycleValid(job, windows) {
   }
   if (windows.postfin) {
     if (windows.finishReturn > windows.postfin.start) {
-      throw new Error(
-        `[finishing-cycle] ${job.name}: Finish Return ${windows.finishReturn} > ` +
-        `Post-Fin start ${windows.postfin.start} — finisher hasn't returned cabs ` +
-        `before assembly is supposed to begin. Push delivery date or relax customWindow.postfin.`
+      errors.push(
+        `Finish Return ${windows.finishReturn} > Post-Fin start ${windows.postfin.start} — ` +
+        `finisher hasn't returned cabs before assembly is supposed to begin. ` +
+        `Push delivery date or relax customWindow.postfin.`
       );
     }
   }
+  return { valid: errors.length === 0, errors };
+}
+
+// A2: throws if the finishing cycle leaves zero days for the finisher.
+// Applies to non-pLam jobs with finishingDays > 0 — both auto-computed windows
+// and user-supplied customWindow placements (a violating customWindow means the
+// override itself is operationally invalid and needs the user to fix it).
+function assertFinishingCycleValid(job, windows) {
+  const { valid, errors } = checkFinishingCycleValid(job, windows);
+  if (!valid) {
+    throw new Error(`[finishing-cycle] ${job.name}: ${errors.join('; ')}`);
+  }
+}
+
+// A3: count business days from start to end inclusive (Mon-Fri).
+// Returns 0 if start > end. Holidays not modeled (matches addBusinessDays).
+function businessDaysBetween(startISO, endISO) {
+  if (startISO > endISO) return 0;
+  let d = parseISO(startISO);
+  const end = parseISO(endISO);
+  let count = 0;
+  while (d <= end) {
+    const dow = d.getUTCDay();
+    if (dow !== 0 && dow !== 6) count++;
+    d = addDays(d, 1);
+  }
+  return count;
+}
+
+// A3: build one row of the finishing-cycle validation table for a single job.
+// Pure — no I/O. Returns either a 'skipped' marker (pLam, no finishing, missing
+// windows — these don't get per-job rows in the report) or a 'row' with the
+// data the report displays + the valid/errors verdict from checkFinishingCycleValid.
+function buildFinishingCycleRow(job, windows) {
+  if (!job) return { kind: 'skipped', reason: 'no job' };
+  if (job.pLam) return { kind: 'skipped', jobId: job.id, jobName: job.name, reason: 'pLam' };
+  if (!job.finishingDays || job.finishingDays <= 0) {
+    return { kind: 'skipped', jobId: job.id, jobName: job.name, reason: 'no finishing' };
+  }
+  if (!windows || !windows.prefin || !windows.postfin || !windows.finishDrop || !windows.finishReturn) {
+    return { kind: 'skipped', jobId: job.id, jobName: job.name, reason: 'missing windows' };
+  }
+  const prefinEnd = windows.prefin.end;
+  const postfinStart = windows.postfin.start;
+  const earliestFinisherStart = addBusinessDays(prefinEnd, 1);
+  const latestFinisherEnd = addBusinessDays(postfinStart, -1);
+  const gap = businessDaysBetween(earliestFinisherStart, latestFinisherEnd);
+  const { valid, errors } = checkFinishingCycleValid(job, windows);
+  return {
+    kind: 'row',
+    jobId: job.id,
+    jobName: job.name,
+    finishingDays: job.finishingDays,
+    prefinEnd,
+    postfinStart,
+    finishDrop: windows.finishDrop,
+    finishReturn: windows.finishReturn,
+    gap,
+    valid,
+    errors,
+  };
+}
+
+// A3: pure gate logic for --execute. Inspects plan.finishingCycleReport and
+// returns { block, invalidRows[], bypassed? }. block=true → execute() refuses
+// to run. force=true → block=false even with invalid rows, bypassed=true so
+// the caller can log a "bypassed per --force" note.
+function checkExecuteGate(plan, opts = {}) {
+  const fcr = plan?.finishingCycleReport;
+  const invalidRows = (fcr?.rows || []).filter(r => r && r.valid === false);
+  if (invalidRows.length === 0) {
+    return { block: false, invalidRows: [] };
+  }
+  if (opts.force) {
+    return { block: false, invalidRows, bypassed: true };
+  }
+  return { block: true, invalidRows };
 }
 
 /**
@@ -1179,21 +1259,46 @@ async function plan() {
 
   const allPlacements = [];
   const warnings = [];
+  // A3: per-job finishing-cycle rows + skip count for the validation report
+  const finishingCycleRows = [];
+  let finishingCycleSkipped = 0;
 
   for (const job of activeJobs) {
     // PATCH D: skip jobs in the skipJobs list
     if (OVERRIDES.skipJobs?.includes(job.id)) {
       console.log(`Skipping ${job.name} per overrides.skipJobs`);
+      finishingCycleSkipped++;
       continue;
     }
     if (!job.delivery) {
       warnings.push(`Job ${job.name} has no delivery date — skipping`);
+      finishingCycleSkipped++;
       continue;
     }
     const windows = computeWindows(job);
     if (!windows) {
       warnings.push(`Could not compute windows for ${job.name}`);
+      finishingCycleSkipped++;
       continue;
+    }
+
+    // A3: build finishing-cycle row (or count skip) for this job
+    const fcRow = buildFinishingCycleRow(job, windows);
+    if (fcRow.kind === 'row') {
+      finishingCycleRows.push({
+        jobId: fcRow.jobId,
+        jobName: fcRow.jobName,
+        finishingDays: fcRow.finishingDays,
+        prefinEnd: fcRow.prefinEnd,
+        postfinStart: fcRow.postfinStart,
+        finishDrop: fcRow.finishDrop,
+        finishReturn: fcRow.finishReturn,
+        gap: fcRow.gap,
+        valid: fcRow.valid,
+        errors: fcRow.errors,
+      });
+    } else {
+      finishingCycleSkipped++;
     }
 
     const stations = [
@@ -1236,6 +1341,11 @@ async function plan() {
   }
 
   // Build summary report
+  const finishingCycleReport = {
+    rows: finishingCycleRows,
+    skippedCount: finishingCycleSkipped,
+    invalidCount: finishingCycleRows.filter(r => !r.valid).length,
+  };
   const report = {
     generatedAt: new Date().toISOString(),
     mode: 'plan',
@@ -1244,6 +1354,7 @@ async function plan() {
     warnings,
     capacityGrid: {},
     placements: allPlacements,
+    finishingCycleReport,
     existingSubitemIdsToDelete: existingSubs
       .filter(s => activeJobs.some(j => j.masterPmId === s.masterPmId))
       .map(s => s.id),
@@ -1294,6 +1405,28 @@ async function plan() {
   console.log('\n=== WARNINGS ===');
   if (warnings.length === 0) console.log('  None ✅');
   else warnings.forEach(w => console.log(`  ⚠️  ${w}`));
+
+  // A3: finishing-cycle validation table
+  console.log('\n=== FINISHING CYCLE VALIDATION ===');
+  if (finishingCycleReport.rows.length === 0) {
+    console.log('  No non-pLam jobs with finishing days in this plan.');
+  } else {
+    for (const r of finishingCycleReport.rows) {
+      const mark = r.valid ? '✓' : '❌';
+      console.log(
+        `  ${mark} ${r.jobName}  prefin end ${r.prefinEnd}  finishingDays ${r.finishingDays}  postfin start ${r.postfinStart}  gap ${r.gap} BD`
+      );
+      if (!r.valid) {
+        for (const e of r.errors) console.log(`      - ${e}`);
+      }
+    }
+  }
+  if (finishingCycleReport.skippedCount > 0) {
+    console.log(`  (${finishingCycleReport.skippedCount} skipped — pLam, no delivery, or no finishing cycle)`);
+  }
+  if (finishingCycleReport.invalidCount > 0) {
+    console.log(`  ⚠️  ${finishingCycleReport.invalidCount} invalid cycle(s) — --execute will refuse to run without --force.`);
+  }
 
   // PATCH 1: Subcontractor usage summary
   const subUsage = new Map();
@@ -1353,6 +1486,23 @@ async function execute() {
   const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
   console.log(`Plan generated: ${plan.generatedAt}`);
   console.log(`Placements: ${plan.placements.length}, Deletes: ${plan.existingSubitemIdsToDelete.length}`);
+
+  // A3: refuse to execute if any finishing-cycle row in the plan is invalid,
+  // unless --force is set.
+  const gate = checkExecuteGate(plan, { force: FORCE });
+  if (gate.bypassed) {
+    console.log(`\n⚠️  Bypassing ${gate.invalidRows.length} finishing-cycle invalid row(s) per --force:`);
+    for (const r of gate.invalidRows) {
+      console.log(`   - ${r.jobName}: ${(r.errors || []).join('; ')}`);
+    }
+  } else if (gate.block) {
+    console.error(`\n❌ ${gate.invalidRows.length} finishing-cycle invalid row(s) in latest plan:`);
+    for (const r of gate.invalidRows) {
+      console.error(`   - ${r.jobName}: ${(r.errors || []).join('; ')}`);
+    }
+    console.error(`\nFix windows in customWindow overrides or push delivery dates, OR rerun with --force to bypass.`);
+    process.exit(1);
+  }
 
   console.log('\nThis will DELETE all existing subitems for active jobs and CREATE new ones per plan.');
   console.log('Waiting 5 seconds before proceeding — press Ctrl+C to abort...');
@@ -1496,6 +1646,11 @@ module.exports = {
   autoCreateCrewParents,
   BOARD_CREW_ALLOC,
   findLatestPlanFile,
+  checkFinishingCycleValid,
+  assertFinishingCycleValid,
+  buildFinishingCycleRow,
+  checkExecuteGate,
+  businessDaysBetween,
 };
 
 // ============================================================================
