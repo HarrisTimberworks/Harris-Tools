@@ -22,11 +22,6 @@ const path = require('path');
 const API_URL = 'https://api.monday.com/v2';
 const TOKEN = process.env.MONDAY_API_TOKEN;
 
-if (!TOKEN) {
-  console.error('ERROR: MONDAY_API_TOKEN env var required');
-  process.exit(1);
-}
-
 const MODE = process.argv.includes('--execute') ? 'execute' : 'plan';
 
 // ============================================================================
@@ -1320,15 +1315,38 @@ async function execute() {
 }
 
 // ============================================================================
+// EXPORTS — pure helpers + computeWindows callable from tests / sibling modules
+// without triggering CLI entry. CLI invocations (require.main === module) keep
+// the original token check + IIFE.
+// ============================================================================
+
+module.exports = {
+  computeWindows,
+  parseISO,
+  toISO,
+  addDays,
+  addBusinessDays,
+  businessDaysBack,
+  getMondayOfWeek,
+  weeksCountForHours,
+};
+
+// ============================================================================
 // ENTRY POINT
 // ============================================================================
 
-(async () => {
-  try {
-    if (MODE === 'plan') await plan();
-    else await execute();
-  } catch (e) {
-    console.error(e);
+if (require.main === module) {
+  if (!TOKEN) {
+    console.error('ERROR: MONDAY_API_TOKEN env var required');
     process.exit(1);
   }
-})();
+  (async () => {
+    try {
+      if (MODE === 'plan') await plan();
+      else await execute();
+    } catch (e) {
+      console.error(e);
+      process.exit(1);
+    }
+  })();
+}
