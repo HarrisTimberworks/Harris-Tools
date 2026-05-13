@@ -374,6 +374,98 @@ Uses a combined MATRIX with Primary / Secondary flags — if this doc changes, p
 | 2026-04-23 | Added Hard Rules section | Previously implicit — making explicit |
 | 2026-04-23 | Added Res-FL Engineering priority ladder | Critical-path edge case |
 | 2026-04-24 | Removed Ken from PreFin Secondary lists for Res-FF, Res-FL, and Mixed | Internal inconsistency — Hard Rule #6 and Ken's profile both specify Commercial-only for PreFin, but the Secondary tables for non-Commercial subtypes incorrectly listed Ken as a fallback. Hard rule wins; tables now match. Updated SECONDARY object in source-code mirror to match. |
+| 2026-05-10 | Added Section 13 — System Reference (board + column IDs) | Phase 1 B1 — Manual Overrides board created (18413101550), need durable lookup for board/column/group/dropdown IDs that the planner read pipeline (B4+) will consume |
+
+---
+
+## 13. System Reference — Board & Column IDs
+
+Quick lookup for board IDs, column IDs, group IDs, and dropdown values used by `scripts/rebalance-schedule.js` and the Phase 1 Manual Overrides build. For GraphQL quirks (FormulaValue, BoardRelationValue, MirrorValue, reversed Date EXACT filter), see [docs/htw-production-system-handoff.md](htw-production-system-handoff.md) and [docs/system-architecture.md](system-architecture.md).
+
+### Workspace
+
+| Resource | ID |
+|---|---|
+| Project Management workspace | `11761515` |
+
+### Boards
+
+| Board | ID | Role |
+|---|---|---|
+| Production Load | `18407601557` | Master job list, formula hours, finishing dates |
+| Master PM | `9820786641` | Delivery commitments, customer info |
+| Weekly Crew Allocation (parents) | `18409529791` | One row per (crew × week), holds base hours / time off / non-prod |
+| Crew Allocation (subitems) | `18409530171` | Placements: (job × station × crew × week × hours) |
+| Time Off | `18409530322` | PTO entries, weekly hour rollups |
+| 🛠️ HTW Manual Overrides (Phase 1) | `18413101550` | Per-week override rows for the planner read pipeline (B4+) |
+
+### Manual Overrides board — column reference
+
+All column IDs captured at board creation (2026-05-10). For B4 read pipeline.
+
+| Column | Type | ID |
+|---|---|---|
+| Override Name | name (default) | `name` |
+| Job | board_relation → Master PM | `board_relation_mm3a4yk3` |
+| Station | dropdown | `dropdown_mm3avza0` |
+| From Crew | board_relation → Crew Alloc parents | `board_relation_mm3agpw8` |
+| From Week | date | `date_mm3adwrw` |
+| To Crew | board_relation → Crew Alloc parents | `board_relation_mm3aqb40` |
+| To Week | date | `date_mm3ack0z` |
+| Hours | numbers | `numeric_mm3ad4na` |
+| Status | status | `color_mm3aqx5g` |
+| Conflict Reason | long_text | `long_text_mm3a99d0` |
+| Reason | text | `text_mm3akyd9` |
+| Created By | people | `multiple_person_mm3a1b2q` |
+| Last Run | date | `date_mm3axrbq` |
+| Allow Over-Cap | checkbox | `boolean_mm3ahx01` |
+
+### Manual Overrides board — groups
+
+| Group | ID | Role |
+|---|---|---|
+| Active | `topics` | Working rows; planner reads from here |
+| Stale | `group_mm3aqn5a` | Historical archive (auto-populated by native automations) |
+
+### Manual Overrides board — Station dropdown values
+
+| Label | Dropdown ID |
+|---|---|
+| Engineering | `1` |
+| Panel Processing | `2` |
+| Benchwork | `3` |
+| Pre Fin Cab Assembly | `4` |
+| Post Fin Cab Assembly | `5` |
+| Pack & Ship | `6` |
+| Delivery | `7` |
+| Field | `8` |
+
+Labels match `STATION_IDS` keys in `scripts/rebalance-schedule.js` (long-form). `Field` is new at the override board — represents off-board punchlist work that doesn't auto-route but operators record for the Capacity View.
+
+### Manual Overrides board — Status labels
+
+| Label | Color | Index | Monday Status ID |
+|---|---|---|---|
+| Pending | working_orange (#fdab3d) | 0 | 0 |
+| Applied | done_green (#00c875) | 1 | 1 |
+| Conflict | stuck_red (#df2f4a) | 2 | 2 |
+| Cleared | american_gray (#757575) | 3 | 17 |
+
+The spec also references "Cleared (auto)" for native-automation-driven clears (when a past-week Pending row gets staled). If you want that distinction visible in the UI, add a 5th label `Cleared (auto)` via the column settings (monday UI → column → Edit labels) and use it as the target Status of the second auto-stale automation. Otherwise the second automation can set Status to plain `Cleared` and tribal knowledge fills in the rest.
+
+### Native automations — configured 2026-05-10
+
+Three automations live on the board. All three are **date-triggered on `To Week` arrival** with a single status condition — not status-triggered with a date condition as the spec literally describes. Reason: monday's automation builder in this account doesn't expose "date is before today" as a condition; flipping the model to date-trigger with status-condition produces identical end-state and is fully buildable.
+
+| # | Name | Trigger | Condition | Action |
+|---|---|---|---|---|
+| 1 | Past-week Applied → Stale | When To Week arrives | If Status is Applied | Move to Stale |
+| 2 | Past-week Cleared → Stale | When To Week arrives | If Status is Cleared | Move to Stale |
+| 3 | Past-week Pending → auto-cleared + Stale | When To Week arrives | If Status is Pending | Move to Stale; set Status to Cleared |
+
+**End-state equivalence to spec:** Each row's lifecycle exit is "when the row's deadline passes, evaluate Status once and act." Status-triggered would have fired at every status change with a date guard; date-triggered fires once at deadline with a status read. Net behavior matches.
+
+**Deferred edge case:** Pure-clear rows (To Crew empty, no To Week date) won't auto-stale under these 3 automations — their deadline is From Week, not To Week. Add 3 mirror automations triggered on **From Week** with extra condition "If To Crew is empty" if pure-clear rows accumulate. Skipped for Phase 1; revisit if real usage surfaces the gap.
 
 ---
 
