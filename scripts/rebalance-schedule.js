@@ -997,6 +997,41 @@ function checkExecuteGate(plan, opts = {}) {
   return { block: true, invalidRows };
 }
 
+// A5: per-job writeback entry for the Production Load Board finish-date columns.
+// Pure — derives the entry the executor will apply. For pLam jobs and jobs with
+// finishingDays=0, both dates are null (executor clears the PL columns). For
+// non-pLam jobs whose windows lack finish dates (defensive — shouldn't happen
+// post-A2), nulls are emitted so the column gets cleared rather than left stale.
+function buildFinishDateWriteback(job, windows) {
+  const finishDrop = windows && windows.finishDrop ? windows.finishDrop : null;
+  const finishReturn = windows && windows.finishReturn ? windows.finishReturn : null;
+  return {
+    jobId: job.id,
+    jobName: job.name,
+    plItemId: job.id,
+    finishDrop,
+    finishReturn,
+  };
+}
+
+// A5: convert plan.finishDateWritebacks[] into mutation params for
+// change_multiple_column_values. Each entry produces one { plItemId,
+// columnValues } pair. Dates → { date: 'YYYY-MM-DD' }; null → null (clears the
+// monday column). Caller issues one mutation per entry against BOARD_PL.
+function buildFinishDateMutations(plan, opts = {}) {
+  const finishDropCol = opts.finishDropCol ?? COL_PL.finishDrop;
+  const finishReturnCol = opts.finishReturnCol ?? COL_PL.finishReturn;
+  const writebacks = plan?.finishDateWritebacks;
+  if (!Array.isArray(writebacks) || writebacks.length === 0) return [];
+  return writebacks.map(w => ({
+    plItemId: w.plItemId,
+    columnValues: {
+      [finishDropCol]: w.finishDrop ? { date: w.finishDrop } : null,
+      [finishReturnCol]: w.finishReturn ? { date: w.finishReturn } : null,
+    },
+  }));
+}
+
 /**
  * Allocate hours to a specific week+crew. Spreads over multiple candidates if
  * the Primary is at capacity.
@@ -1262,6 +1297,10 @@ async function plan() {
   // A3: per-job finishing-cycle rows + skip count for the validation report
   const finishingCycleRows = [];
   let finishingCycleSkipped = 0;
+  // A5: per-job PL-board finish-date writebacks. One entry per active job with
+  // computed windows; dates null for pLam / finishingDays=0 / missing (executor
+  // clears those PL columns rather than leaving them stale).
+  const finishDateWritebacks = [];
 
   for (const job of activeJobs) {
     // PATCH D: skip jobs in the skipJobs list
@@ -1281,6 +1320,9 @@ async function plan() {
       finishingCycleSkipped++;
       continue;
     }
+
+    // A5: build PL-board finish-date writeback for this job (dates or nulls).
+    finishDateWritebacks.push(buildFinishDateWriteback(job, windows));
 
     // A3: build finishing-cycle row (or count skip) for this job
     const fcRow = buildFinishingCycleRow(job, windows);
@@ -1355,6 +1397,7 @@ async function plan() {
     capacityGrid: {},
     placements: allPlacements,
     finishingCycleReport,
+    finishDateWritebacks,
     existingSubitemIdsToDelete: existingSubs
       .filter(s => activeJobs.some(j => j.masterPmId === s.masterPmId))
       .map(s => s.id),
@@ -1551,6 +1594,34 @@ async function execute() {
   console.log(`Created ${created} subitems.`);
   if (subSkipped > 0) console.log(`Skipped ${subSkipped} subcontractor placement(s) — no monday subitem created (ops-tracked only).`);
 
+  // A5: write computed finishDrop / finishReturn back to the Production Load
+  // Board so the columns stop going stale after every --execute (iter-8 pain).
+  // pLam / finishingDays=0 jobs get nulls (clear the columns).
+  const finishMutations = buildFinishDateMutations(plan);
+  if (finishMutations.length > 0) {
+    console.log(`\nWriting finish dates to Production Load Board (${finishMutations.length} job(s))...`);
+    let writeOk = 0;
+    let writeFail = 0;
+    for (const m of finishMutations) {
+      const cvStr = JSON.stringify(m.columnValues).replace(/"/g, '\\"');
+      const mutation = `mutation {
+        change_multiple_column_values(
+          item_id: ${m.plItemId},
+          board_id: ${BOARD_PL},
+          column_values: "${cvStr}"
+        ) { id }
+      }`;
+      try {
+        await gql(mutation);
+        writeOk++;
+      } catch (e) {
+        writeFail++;
+        console.error(`Failed to write finish dates for PL item ${m.plItemId}:`, e.message);
+      }
+    }
+    console.log(`Finish-date writeback: ${writeOk} ok${writeFail > 0 ? `, ${writeFail} failed` : ''}.`);
+  }
+
   console.log('\n✅ Execution complete.');
 }
 
@@ -1651,6 +1722,8 @@ module.exports = {
   buildFinishingCycleRow,
   checkExecuteGate,
   businessDaysBetween,
+  buildFinishDateWriteback,
+  buildFinishDateMutations,
 };
 
 // ============================================================================
