@@ -1162,11 +1162,22 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
     }
     const candidatesForWk = [...assignedSubs, ...candidates, ...generalSubs, ...fallbackSubs];
 
-    // PATCH 3: Filter primaries through hard rules + exclusions
+    // PATCH 3: Filter primaries through hard rules + exclusions.
+    // PATCH 6 (2026-05-18): Also exclude primaries with no remaining room
+    // (committed >= softCap). Bug 4 (BCH PostFin dupe): when a primary p1
+    // is at softCap, the multi-primary split below sent iter-A's perPrimary
+    // share through p1's candidate list, fell through to p2, then ran iter-B
+    // for p2 which placed ANOTHER perPrimary share on p2 — producing two
+    // separate placements on the same crew. Filtering full primaries here
+    // collapses primariesAvailableThisWeek.length to 1 in that case, which
+    // routes to the else-branch (single allocateStationWeek with full hours)
+    // and emits a single placement.
     const primariesAvailableThisWeek = primary.filter(c => {
       if (!grid[c]?.[wk]?.parentId || grid[c][wk].available <= 0) return false;
       if (hardRuleViolation(c, station, job.subtype, wk)) return false;
       if (jobExclusionViolation(c, job.id)) return false;
+      const softCap = grid[c][wk].available * SOFT_CAP_MULTIPLIER;
+      if (grid[c][wk].committed >= softCap) return false;
       return true;
     });
 
@@ -1724,6 +1735,9 @@ module.exports = {
   businessDaysBetween,
   buildFinishDateWriteback,
   buildFinishDateMutations,
+  scheduleStation,
+  allocateStationWeek,
+  SOFT_CAP_MULTIPLIER,
 };
 
 // ============================================================================
