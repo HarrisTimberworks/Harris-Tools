@@ -1422,6 +1422,11 @@ async function plan() {
       if (!slot) continue;  // subcontractor virtual-crew rows only exist on one week
       // Include the cell if there's work, capacity, OR PTO that zeroed it out
       if (slot.committed > 0 || slot.available > 0 || slot.timeOff > 0) {
+        // Bug 5 diagnostic: include slot.assignments so the source of every
+        // committed delta is visible in the saved plan. Lets us diff
+        // sum(assignments[].hours) vs sum(placements where crew/week match)
+        // to find writes-without-placements (or vice versa). Lightweight — most
+        // cells have <10 assignments. Remove once Bug 5 is closed.
         report.capacityGrid[crew][wk] = {
           avail: slot.available,
           committed: Number(slot.committed.toFixed(2)),
@@ -1429,7 +1434,63 @@ async function plan() {
           over: slot.committed > slot.available * SOFT_CAP_MULTIPLIER
             ? Number((slot.committed - slot.available).toFixed(2))
             : 0,
+          assignments: slot.assignments.map(a => ({
+            job: a.job,
+            station: a.station,
+            hours: Number((a.hours || 0).toFixed(2)),
+            ...(a.forced ? { forced: true } : {}),
+            ...(a.preExisting ? { preExisting: true } : {}),
+          })),
         };
+      }
+    }
+  }
+
+  // Bug 5 instrumentation: per (crew, week), verify slot.committed equals
+  // sum(allPlacements where p.crew=crew & p.week=wk & !isSub) + sum(preExisting).
+  // Any mismatch is a write-without-placement leak. Emitted to console + saved
+  // into report.committedAuditMismatches for diffing in the saved plan.
+  {
+    const placementSums = new Map();  // `${crew}|${wk}` → hours
+    for (const p of allPlacements) {
+      if (p.isSubcontractor) continue;
+      const key = `${p.crew}|${p.week}`;
+      placementSums.set(key, (placementSums.get(key) || 0) + p.hours);
+    }
+    const mismatches = [];
+    for (const crew of Object.keys(grid)) {
+      for (const wk of weeks) {
+        const slot = grid[crew]?.[wk];
+        if (!slot) continue;
+        if (slot.subcontractor) continue;  // virtual sub crews not in placementSums
+        const placed = placementSums.get(`${crew}|${wk}`) || 0;
+        const preExisting = (slot.assignments || [])
+          .filter(a => a.preExisting)
+          .reduce((s, a) => s + (a.hours || 0), 0);
+        const expected = placed + preExisting;
+        const delta = slot.committed - expected;
+        if (Math.abs(delta) > 0.01) {
+          mismatches.push({
+            crew, week: wk,
+            committed: Number(slot.committed.toFixed(2)),
+            placed: Number(placed.toFixed(2)),
+            preExisting: Number(preExisting.toFixed(2)),
+            phantom: Number(delta.toFixed(2)),
+            assignments: slot.assignments.map(a => ({
+              job: a.job, station: a.station, hours: Number((a.hours || 0).toFixed(2)),
+              ...(a.forced ? { forced: true } : {}),
+              ...(a.preExisting ? { preExisting: true } : {}),
+            })),
+          });
+        }
+      }
+    }
+    report.committedAuditMismatches = mismatches;
+    if (mismatches.length > 0) {
+      console.log(`\n=== COMMITTED-AUDIT MISMATCHES (${mismatches.length}) ===`);
+      console.log('committed != sum(placements) + sum(preExisting) → phantom hours');
+      for (const m of mismatches) {
+        console.log(`  ${m.crew} ${m.week}: committed=${m.committed} placed=${m.placed} preExisting=${m.preExisting} phantom=${m.phantom}`);
       }
     }
   }
