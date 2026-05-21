@@ -1422,11 +1422,9 @@ async function plan() {
       if (!slot) continue;  // subcontractor virtual-crew rows only exist on one week
       // Include the cell if there's work, capacity, OR PTO that zeroed it out
       if (slot.committed > 0 || slot.available > 0 || slot.timeOff > 0) {
-        // Bug 5 diagnostic: include slot.assignments so the source of every
-        // committed delta is visible in the saved plan. Lets us diff
-        // sum(assignments[].hours) vs sum(placements where crew/week match)
-        // to find writes-without-placements (or vice versa). Lightweight — most
-        // cells have <10 assignments. Remove once Bug 5 is closed.
+        // Per-cell assignment breakdown — paired with the committedAudit invariant
+        // below for forensics. preExisting entries appear nowhere else in the plan
+        // JSON, so this is the only place they're visible at the cell level.
         report.capacityGrid[crew][wk] = {
           avail: slot.available,
           committed: Number(slot.committed.toFixed(2)),
