@@ -55,6 +55,7 @@ const BOARD_MASTER_PM = 9820786641;    // Master PM
 const BOARD_CREW_ALLOC = 18409529791;  // Weekly Crew Allocation (parents)
 const BOARD_CREW_SUBITEMS = 18409530171; // Crew Allocation subitems
 const BOARD_TIME_OFF = 18409530322;    // Time Off
+const BOARD_OVERRIDES = 18413101550;   // 🛠️ HTW Manual Overrides (Phase 1 B1)
 
 // Column IDs on Production Load Board
 const COL_PL = {
@@ -106,6 +107,25 @@ const COL_TO = {
   type: 'color_mm2kfmtt',
   status: 'color_mm2kt4fv',
 };
+
+// Column IDs on Manual Overrides board. Full reference (including Conflict
+// Reason, Reason, Created By, Last Run) lives in docs/htw-cross-training-matrix.md §13;
+// B4 only consumes the read-side columns.
+const COL_OV = {
+  job: 'board_relation_mm3a4yk3',
+  station: 'dropdown_mm3avza0',
+  fromCrew: 'board_relation_mm3agpw8',
+  fromWeek: 'date_mm3adwrw',
+  toCrew: 'board_relation_mm3aqb40',
+  toWeek: 'date_mm3ack0z',
+  hours: 'numeric_mm3ad4na',
+  status: 'color_mm3aqx5g',
+  allowOverCap: 'boolean_mm3ahx01',
+};
+
+// Active group is the working set; Stale is archival (auto-populated by
+// monday automations once a row's To Week passes). B4 only reads Active.
+const OVERRIDES_GROUP_ACTIVE = 'topics';
 
 // Station dropdown labels → IDs
 const STATION_IDS = {
@@ -514,6 +534,69 @@ async function loadSubitems(gqlFn = gql) {
   return results;
 }
 
+// Read Active-group rows from the Manual Overrides board (B4). Returns one
+// normalized row per Active item; Stale group is filtered out. Pure read —
+// translation into forceAssignments / crewExclusions happens downstream in
+// translateOverrideRows so this stays board-shape-only.
+async function loadOverridesBoard({ gqlFn = gql } = {}) {
+  const colIds = [
+    COL_OV.job, COL_OV.station,
+    COL_OV.fromCrew, COL_OV.fromWeek,
+    COL_OV.toCrew, COL_OV.toWeek,
+    COL_OV.hours, COL_OV.status, COL_OV.allowOverCap,
+  ].map(s => `"${s}"`).join(',');
+
+  const q = `query($cursor: String) {
+    boards(ids: [${BOARD_OVERRIDES}]) {
+      items_page(limit: 100, cursor: $cursor) {
+        cursor
+        items {
+          id
+          group { id }
+          column_values(ids: [${colIds}]) {
+            id text value
+            ... on BoardRelationValue { linked_item_ids }
+          }
+        }
+      }
+    }
+  }`;
+
+  const results = [];
+  let cursor = null;
+  do {
+    const data = await gqlFn(q, { cursor });
+    const page = data.boards[0].items_page;
+    for (const item of page.items) {
+      if (item.group?.id !== OVERRIDES_GROUP_ACTIVE) continue;
+      const cv = {};
+      for (const v of item.column_values) cv[v.id] = v;
+
+      let allowOverCap = false;
+      try {
+        const parsed = JSON.parse(cv[COL_OV.allowOverCap]?.value || '{}');
+        allowOverCap = parsed?.checked === 'true' || parsed?.checked === true;
+      } catch (e) { /* unchecked column has no value */ }
+
+      results.push({
+        rowId: String(item.id),
+        jobMpmId: cv[COL_OV.job]?.linked_item_ids?.[0] || null,
+        station: cv[COL_OV.station]?.text || null,
+        fromCrewParentId: cv[COL_OV.fromCrew]?.linked_item_ids?.[0] || null,
+        fromWeek: cv[COL_OV.fromWeek]?.text || null,
+        toCrewParentId: cv[COL_OV.toCrew]?.linked_item_ids?.[0] || null,
+        toWeek: cv[COL_OV.toWeek]?.text || null,
+        hours: parseFloat(cv[COL_OV.hours]?.text || '0'),
+        status: cv[COL_OV.status]?.text || null,
+        allowOverCap,
+      });
+    }
+    cursor = page.cursor;
+  } while (cursor);
+
+  return results;
+}
+
 // Single entry point for all monday-side reads. Lets runPlan() and downstream
 // tools (Phase 1 B5 validation pipeline, Phase 2 outputs) operate on a static
 // snapshot instead of re-fetching every call. The token check lives here — if
@@ -526,7 +609,8 @@ async function loadAll({ gqlFn = gql } = {}) {
   const crewParents = await loadCrewParents(gqlFn);
   const timeOff = await loadTimeOff(gqlFn);
   const existingSubs = await loadSubitems(gqlFn);
-  return { jobs, crewParents, timeOff, existingSubs };
+  const overrideRows = await loadOverridesBoard({ gqlFn });
+  return { jobs, crewParents, timeOff, existingSubs, overrideRows };
 }
 
 // ============================================================================
@@ -713,14 +797,212 @@ function jobExclusionViolation(crew, jobId) {
 
 // PATCH 4: forceAssignments — pinned (crew, jobId, stations[], week, hours?) placements
 function getForceAssignments(jobId, station, week) {
+  const source = activeForceAssignments !== null ? activeForceAssignments : (OVERRIDES.forceAssignments || []);
   const matches = [];
-  for (const entry of OVERRIDES.forceAssignments || []) {
+  for (const entry of source) {
     if (entry.jobId !== jobId) continue;
     if (!entry.stations?.includes(station)) continue;
     if (entry.week !== week) continue;
     matches.push(entry);
   }
   return matches;
+}
+
+// B4: per-run merged forceAssignments. runPlan() sets this to the union of
+// OVERRIDES.forceAssignments (JSON) + board-derived forces (translated from
+// the Manual Overrides board), board winning on tuple match. getForceAssignments
+// reads from here when non-null so the planner sees the merged view without
+// any callsite needing to thread the merged set through. Null = use OVERRIDES
+// directly (matches pre-B4 behavior; used by tests + tooling that import this
+// module without calling runPlan).
+let activeForceAssignments = null;
+
+// B4: translate normalized Manual Overrides board rows into the planner's
+// internal primitives. Pure — no monday I/O.
+//
+// Override-board vocabulary: (job × station × from_crew × from_week × to_crew ×
+// to_week × hours). Phase 1 maps each row to ONE planner primitive based on
+// From/To presence:
+//
+//   - Pure assign (empty From, has To): emit a forceAssignment for the to-side.
+//   - Pure clear (has From, empty To): emit a fine-grained crewExclusion for
+//     (job × station × week × from_crew).
+//   - Move (both sides):  emit ONLY the to-side forceAssignment. The from-side
+//     is metadata for human readability; the operator owns the from-side's
+//     natural auto-routing. Phase 1 does NOT model bidirectional override
+//     propagation (i.e., we don't auto-subtract from-side hours from the plan;
+//     the to-side commitment is the load-bearing claim).
+//
+// Non-Pending rows (Applied / Conflict / Cleared) are silently skipped — they
+// were translated on a prior run; re-translating them would either double-apply
+// (Applied) or re-surface conflicts the operator already saw (Conflict).
+//
+// Unresolved refs (Master PM id with no PL row, or Crew Allocation parent id
+// with no matching crewParent) defer to an `untranslatable` bucket so B5's
+// validation pipeline can flag them as Conflict — translating bogus rows would
+// crash here, which loses the operator's audit trail.
+function translateOverrideRows(rows, plJobs, crewParents) {
+  const forceAssignments = [];
+  const crewExclusions = [];
+  const untranslatable = [];
+
+  const jobByMpm = new Map();
+  for (const j of plJobs || []) {
+    if (j.masterPmId != null) jobByMpm.set(String(j.masterPmId), j);
+  }
+  const crewByParent = new Map();
+  for (const p of crewParents || []) {
+    crewByParent.set(String(p.parentId), { crew: p.crew, week: p.week });
+  }
+
+  for (const row of rows || []) {
+    if (row.status !== 'Pending') continue;
+
+    const job = jobByMpm.get(String(row.jobMpmId));
+    if (!job) {
+      untranslatable.push({
+        rowId: row.rowId,
+        reason: `unresolved job: Master PM id ${row.jobMpmId} has no Production Load row`,
+      });
+      continue;
+    }
+
+    const fromRef = row.fromCrewParentId
+      ? crewByParent.get(String(row.fromCrewParentId)) || false
+      : null;
+    const toRef = row.toCrewParentId
+      ? crewByParent.get(String(row.toCrewParentId)) || false
+      : null;
+
+    if (fromRef === false) {
+      untranslatable.push({
+        rowId: row.rowId,
+        reason: `unresolved From crew parent id ${row.fromCrewParentId} — no matching Crew Allocation parent row`,
+      });
+      continue;
+    }
+    if (toRef === false) {
+      untranslatable.push({
+        rowId: row.rowId,
+        reason: `unresolved To crew parent id ${row.toCrewParentId} — no matching Crew Allocation parent row`,
+      });
+      continue;
+    }
+
+    if (!fromRef && toRef) {
+      forceAssignments.push({
+        crew: toRef.crew,
+        jobId: job.id,
+        stations: [row.station],
+        week: toRef.week,
+        hours: row.hours,
+        reason: `Manual Overrides board row ${row.rowId} (pure assign)`,
+        _sourceRowId: row.rowId,
+      });
+    } else if (fromRef && !toRef) {
+      crewExclusions.push({
+        crew: fromRef.crew,
+        jobId: job.id,
+        station: row.station,
+        week: fromRef.week,
+        reason: `Manual Overrides board row ${row.rowId} (pure clear)`,
+        _sourceRowId: row.rowId,
+      });
+    } else if (fromRef && toRef) {
+      forceAssignments.push({
+        crew: toRef.crew,
+        jobId: job.id,
+        stations: [row.station],
+        week: toRef.week,
+        hours: row.hours,
+        reason: `Manual Overrides board row ${row.rowId} (move from ${fromRef.crew} ${fromRef.week})`,
+        _sourceRowId: row.rowId,
+      });
+    } else {
+      untranslatable.push({
+        rowId: row.rowId,
+        reason: 'both From and To crew refs are empty; row has no actionable shape',
+      });
+    }
+  }
+
+  return { forceAssignments, crewExclusions, untranslatable };
+}
+
+// B4: merge JSON-source forceAssignments with board-derived forces. Board wins
+// on (jobId × station × week × crew) tuple match. Pure.
+//
+// JSON entries may carry multi-station arrays (e.g., one entry covering both
+// Pack & Ship and Delivery in the same week); flatten them before tuple
+// comparison so a board override targeting one station doesn't drop the
+// JSON entry's other stations.
+function mergeForceAssignments(jsonForces, boardForces) {
+  const tupleKey = e => `${e.jobId}|${e.stations?.[0]}|${e.week}|${e.crew}`;
+
+  const jsonFlat = [];
+  for (const e of jsonForces || []) {
+    for (const station of e.stations || []) {
+      jsonFlat.push({ ...e, stations: [station] });
+    }
+  }
+
+  const boardByKey = new Map();
+  for (const b of boardForces || []) boardByKey.set(tupleKey(b), b);
+
+  const merged = [];
+  const conflicts = [];
+
+  for (const j of jsonFlat) {
+    const k = tupleKey(j);
+    if (boardByKey.has(k)) {
+      conflicts.push({ key: k, jsonSource: j, boardSource: boardByKey.get(k) });
+      continue;
+    }
+    merged.push(j);
+  }
+  for (const b of boardForces || []) merged.push(b);
+
+  return { merged, conflicts };
+}
+
+// B4: merge JSON crewExclusions with board-derived fine-grained exclusions.
+// The two are different shapes by design:
+//   - JSON  is coarse: { [crew]: { excludeJobs: [...], reason } } — excludes
+//     a crew from all (station, week) for a given jobId.
+//   - Board is fine:   [{ crew, jobId, station, week, reason, _sourceRowId }] —
+//     excludes a crew from one specific (station, week) for a jobId.
+//
+// They coexist; the merge result preserves both. Conflict-logging is for the
+// redundant case where a board fine-grained entry re-asserts a (crew, jobId)
+// the JSON has already excluded coarsely — the board entry stays in the
+// merged set, but the conflict log surfaces the duplication so an operator
+// can clear the redundant board row.
+//
+// The planner does not yet consume board.* exclusions in B4 (different
+// granularity needs validator-side wiring — that's B5+ work). Computing the
+// merge + conflict log now is what B4 owes; consumption follows.
+function mergeCrewExclusions(jsonExclusions, boardExclusions) {
+  const conflicts = [];
+  for (const b of boardExclusions || []) {
+    const jsonEntry = jsonExclusions?.[b.crew];
+    if (jsonEntry?.excludeJobs?.includes(b.jobId)) {
+      conflicts.push({
+        crew: b.crew,
+        jobId: b.jobId,
+        station: b.station,
+        week: b.week,
+        jsonReason: jsonEntry.reason,
+        boardReason: b.reason,
+      });
+    }
+  }
+  return {
+    merged: {
+      json: jsonExclusions || {},
+      board: boardExclusions || [],
+    },
+    conflicts,
+  };
 }
 
 // Apply all matching forces for (job, station, week). Mutates grid.
@@ -1229,9 +1511,9 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
 // ============================================================================
 
 async function runPlan(boards) {
-  const { jobs, crewParents, timeOff, existingSubs } = boards;
+  const { jobs, crewParents, timeOff, existingSubs, overrideRows = [] } = boards;
 
-  console.log(`Loaded: ${jobs.length} jobs, ${crewParents.length} crew-week parents, ${timeOff.length} time off entries, ${existingSubs.length} existing subitems`);
+  console.log(`Loaded: ${jobs.length} jobs, ${crewParents.length} crew-week parents, ${timeOff.length} time off entries, ${existingSubs.length} existing subitems, ${overrideRows.length} active override row(s)`);
 
   // Report which overrides are active
   const overrideCount = Object.keys(OVERRIDES.jobOverrides || {}).length;
@@ -1239,6 +1521,43 @@ async function runPlan(boards) {
   if (overrideCount > 0 || capacityOverrideWeeks > 0) {
     console.log(`Applying ${overrideCount} job override(s), ${capacityOverrideWeeks} capacity override week(s)`);
   }
+
+  // B4: translate Manual Overrides board rows into internal primitives + merge
+  // with JSON-source forces/exclusions. Board wins on (jobId × station × week ×
+  // crew) tuple match for forceAssignments; coarse JSON crewExclusions and
+  // fine-grained board exclusions coexist (redundant overlap is logged but not
+  // resolved — see mergeCrewExclusions docstring). Conflict logging is loud
+  // so an operator scanning console output catches surprising shadowing.
+  const translation = translateOverrideRows(overrideRows, jobs, crewParents);
+  const forceMerge = mergeForceAssignments(OVERRIDES.forceAssignments || [], translation.forceAssignments);
+  const exclMerge  = mergeCrewExclusions(OVERRIDES.crewExclusions || {}, translation.crewExclusions);
+  if (overrideRows.length > 0 || translation.forceAssignments.length || translation.crewExclusions.length || translation.untranslatable.length) {
+    console.log(`Override merge: ${translation.forceAssignments.length} board force(s), ${translation.crewExclusions.length} board exclusion(s), ${translation.untranslatable.length} untranslatable row(s)`);
+  }
+  if (forceMerge.conflicts.length > 0) {
+    console.log(`\n=== OVERRIDE FORCE CONFLICTS (${forceMerge.conflicts.length}) — board wins ===`);
+    for (const c of forceMerge.conflicts) {
+      console.log(`  ${c.key}: JSON ${c.jsonSource.hours ?? '?'}h ('${c.jsonSource.reason || ''}') → board ${c.boardSource.hours ?? '?'}h (row ${c.boardSource._sourceRowId})`);
+    }
+  }
+  if (exclMerge.conflicts.length > 0) {
+    console.log(`\n=== OVERRIDE EXCLUSION REDUNDANCY (${exclMerge.conflicts.length}) — board row duplicates JSON coarse exclusion ===`);
+    for (const c of exclMerge.conflicts) {
+      console.log(`  ${c.crew} ⊅ ${c.jobId} (station ${c.station}, week ${c.week}): JSON='${c.jsonReason || ''}' board='${c.boardReason || ''}'`);
+    }
+  }
+  if (translation.untranslatable.length > 0) {
+    console.log(`\n=== UNTRANSLATABLE OVERRIDE ROWS (${translation.untranslatable.length}) — flagged for B5 validation ===`);
+    for (const u of translation.untranslatable) {
+      console.log(`  row ${u.rowId}: ${u.reason}`);
+    }
+  }
+  // Activate merged forceAssignments view; getForceAssignments() reads from
+  // here for the duration of this run. The try/finally further down restores
+  // it so a thrown error doesn't leak module state into subsequent runs
+  // (matters for tests + the future B5 two-pass driver).
+  activeForceAssignments = forceMerge.merged;
+  try {
 
   // Filter to active jobs (Not Started or Scheduled)
   const activeJobs = jobs.filter(j => ['Not Started', 'Scheduled', 'Ready to Schedule', 'Finishing'].includes(j.status));
@@ -1577,6 +1896,9 @@ async function runPlan(boards) {
   console.log(`\nTo execute this plan: node scripts/rebalance-schedule.js --execute`);
 
   return report;
+  } finally {
+    activeForceAssignments = null;
+  }
 }
 
 // ============================================================================
@@ -1782,8 +2104,12 @@ async function autoCreateCrewParents(missing, gqlFn, opts = {}) {
 
 module.exports = {
   loadAll,
+  loadOverridesBoard,
   runPlan,
   runExecute,
+  translateOverrideRows,
+  mergeForceAssignments,
+  mergeCrewExclusions,
   computeWindows,
   parseISO,
   toISO,
