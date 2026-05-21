@@ -331,7 +331,7 @@ function getWeekList(startISO, endISO) {
 // DATA LOADERS
 // ============================================================================
 
-async function loadJobs() {
+async function loadJobs(gqlFn = gql) {
   const q = `query {
     boards(ids: [${BOARD_PL}]) {
       items_page(limit: 100) {
@@ -350,7 +350,7 @@ async function loadJobs() {
       }
     }
   }`;
-  const data = await gql(q);
+  const data = await gqlFn(q);
   const items = data.boards[0].items_page.items;
 
   return items.map(it => {
@@ -393,7 +393,7 @@ async function loadJobs() {
   });
 }
 
-async function loadCrewParents() {
+async function loadCrewParents(gqlFn = gql) {
   // Paginate if needed (board has 292 items)
   const q = `query($cursor: String) {
     boards(ids: [${BOARD_CREW_ALLOC}]) {
@@ -411,7 +411,7 @@ async function loadCrewParents() {
   const results = [];
   let cursor = null;
   do {
-    const data = await gql(q, { cursor });
+    const data = await gqlFn(q, { cursor });
     const page = data.boards[0].items_page;
     for (const it of page.items) {
       const cv = {};
@@ -430,7 +430,7 @@ async function loadCrewParents() {
   return results;
 }
 
-async function loadTimeOff() {
+async function loadTimeOff(gqlFn = gql) {
   const q = `query {
     boards(ids: [${BOARD_TIME_OFF}]) {
       items_page(limit: 100) {
@@ -443,7 +443,7 @@ async function loadTimeOff() {
       }
     }
   }`;
-  const data = await gql(q);
+  const data = await gqlFn(q);
   const items = data.boards[0].items_page.items;
   return items.map(it => {
     const cv = {};
@@ -467,7 +467,7 @@ async function loadTimeOff() {
   }).filter(t => t.status === 'Approved');
 }
 
-async function loadSubitems() {
+async function loadSubitems(gqlFn = gql) {
   // Pull all subitems to see what's currently scheduled
   const q = `query($cursor: String) {
     boards(ids: [${BOARD_CREW_SUBITEMS}]) {
@@ -490,7 +490,7 @@ async function loadSubitems() {
   const results = [];
   let cursor = null;
   do {
-    const data = await gql(q, { cursor });
+    const data = await gqlFn(q, { cursor });
     const page = data.boards[0].items_page;
     for (const it of page.items) {
       const cv = {};
@@ -512,6 +512,21 @@ async function loadSubitems() {
     cursor = page.cursor;
   } while (cursor);
   return results;
+}
+
+// Single entry point for all monday-side reads. Lets runPlan() and downstream
+// tools (Phase 1 B5 validation pipeline, Phase 2 outputs) operate on a static
+// snapshot instead of re-fetching every call. The token check lives here — if
+// you can call loadAll() with a stub gqlFn, you don't need MONDAY_API_TOKEN.
+async function loadAll({ gqlFn = gql } = {}) {
+  if (gqlFn === gql && !TOKEN) {
+    throw new Error('MONDAY_API_TOKEN env var required when using the default gql function');
+  }
+  const jobs = await loadJobs(gqlFn);
+  const crewParents = await loadCrewParents(gqlFn);
+  const timeOff = await loadTimeOff(gqlFn);
+  const existingSubs = await loadSubitems(gqlFn);
+  return { jobs, crewParents, timeOff, existingSubs };
 }
 
 // ============================================================================
@@ -1213,14 +1228,8 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
 // MAIN PLANNER
 // ============================================================================
 
-async function plan() {
-  console.log('=== HTW Rebalancer — PLAN mode ===');
-  console.log('Loading data from monday.com...');
-
-  const jobs = await loadJobs();
-  const crewParents = await loadCrewParents();
-  const timeOff = await loadTimeOff();
-  const existingSubs = await loadSubitems();
+async function runPlan(boards) {
+  const { jobs, crewParents, timeOff, existingSubs } = boards;
 
   console.log(`Loaded: ${jobs.length} jobs, ${crewParents.length} crew-week parents, ${timeOff.length} time off entries, ${existingSubs.length} existing subitems`);
 
@@ -1566,6 +1575,8 @@ async function plan() {
   console.log(`Existing subitems to delete: ${report.existingSubitemIdsToDelete.length}`);
   console.log(`Plan saved to: ${planFile}`);
   console.log(`\nTo execute this plan: node scripts/rebalance-schedule.js --execute`);
+
+  return report;
 }
 
 // ============================================================================
@@ -1586,17 +1597,12 @@ function findLatestPlanFile(logsDir) {
   return files.length > 0 ? files[0] : null;
 }
 
-async function execute() {
-  console.log('=== HTW Rebalancer — EXECUTE mode ===');
-  const logsDir = path.join(__dirname, '..', 'logs');
-  const fname = findLatestPlanFile(logsDir);
-  if (!fname) {
-    console.error('No plan file found. Run with --plan first.');
-    process.exit(1);
-  }
-  const planFile = path.join(logsDir, fname);
-  console.log(`Loading plan: ${planFile}`);
-  const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+// Caller (CLI orchestrator or future B5 validation pipeline) is responsible for
+// loading `plan` — typically from the latest logs/rebalance-plan-*.json. The
+// `boards` param is accepted for symmetry with runPlan and to give downstream
+// phases (Phase 2 outputs, B6 row-status writeback) a hook for monday-side data
+// without changing the signature. Currently unused inside the function body.
+async function runExecute(plan, boards) {
   console.log(`Plan generated: ${plan.generatedAt}`);
   console.log(`Placements: ${plan.placements.length}, Deletes: ${plan.existingSubitemIdsToDelete.length}`);
 
@@ -1775,6 +1781,9 @@ async function autoCreateCrewParents(missing, gqlFn, opts = {}) {
 // ============================================================================
 
 module.exports = {
+  loadAll,
+  runPlan,
+  runExecute,
   computeWindows,
   parseISO,
   toISO,
@@ -1810,8 +1819,24 @@ if (require.main === module) {
   }
   (async () => {
     try {
-      if (MODE === 'plan') await plan();
-      else await execute();
+      if (MODE === 'plan') {
+        console.log('=== HTW Rebalancer — PLAN mode ===');
+        console.log('Loading data from monday.com...');
+        const boards = await loadAll();
+        await runPlan(boards);
+      } else {
+        console.log('=== HTW Rebalancer — EXECUTE mode ===');
+        const logsDir = path.join(__dirname, '..', 'logs');
+        const fname = findLatestPlanFile(logsDir);
+        if (!fname) {
+          console.error('No plan file found. Run with --plan first.');
+          process.exit(1);
+        }
+        const planFile = path.join(logsDir, fname);
+        console.log(`Loading plan: ${planFile}`);
+        const planObj = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+        await runExecute(planObj, null);
+      }
     } catch (e) {
       console.error(e);
       process.exit(1);
