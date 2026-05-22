@@ -785,9 +785,34 @@ function hardRuleViolation(crew, station, subtype, week) {
   return null;
 }
 
-// PATCH 3: Per-job crew exclusions from OVERRIDES.crewExclusions
-function jobExclusionViolation(crew, jobId) {
-  const ex = OVERRIDES.crewExclusions?.[crew];
+// PATCH 3 + B5c: Per-job crew exclusions from two sources, different granularity.
+//
+//   - Coarse JSON (OVERRIDES.crewExclusions): { [crew]: { excludeJobs: [...], reason } }
+//     Blocks `crew` from `jobId` across ALL (station, week).
+//   - Fine-grained board (activeCrewExclusions.board): [{ crew, jobId, station, week, reason, _sourceRowId }]
+//     Blocks `crew` from `jobId` ONLY at the matching (station, week) tuple —
+//     emitted by translateOverrideRows from a pure-clear Manual Overrides row.
+//
+// Precedence: when both apply to the same (crew, jobId), the fine-grained
+// board entry's reason is returned in preference to the coarse JSON reason.
+// Per E8 (Phase 1 plan §D.2), the board is the more-recent source-of-truth;
+// surfacing the board reason in rejection messaging lets an operator trace
+// the rejection back to the override row that produced it. The coarse JSON
+// path remains the fallback so structural-config exclusions (e.g., "Spencer
+// never Frameless Engineering") continue to fire when no run is in progress
+// (activeCrewExclusions === null) — protects test/import-side usage.
+function jobExclusionViolation(crew, jobId, station, week) {
+  if (activeCrewExclusions?.board) {
+    for (const b of activeCrewExclusions.board) {
+      if (b.crew !== crew) continue;
+      if (String(b.jobId) !== String(jobId)) continue;
+      if (b.station && b.station !== station) continue;
+      if (b.week && b.week !== week) continue;
+      return b.reason || `${crew} excluded from ${jobId} (board fine-grained: ${b.station || '*'}/${b.week || '*'})`;
+    }
+  }
+  const jsonSource = activeCrewExclusions?.json || OVERRIDES.crewExclusions || {};
+  const ex = jsonSource[crew];
   if (!ex) return null;
   if (ex.excludeJobs?.includes(jobId)) {
     return ex.reason || `${crew} excluded from job ${jobId}`;
@@ -816,6 +841,16 @@ function getForceAssignments(jobId, station, week) {
 // directly (matches pre-B4 behavior; used by tests + tooling that import this
 // module without calling runPlan).
 let activeForceAssignments = null;
+
+// B5c: per-run merged crewExclusions, mirroring activeForceAssignments. Shape
+// matches mergeCrewExclusions's output: { json, board } — coarse JSON map plus
+// fine-grained board entries. jobExclusionViolation consults this when non-null,
+// applying fine-grained-board-wins-over-coarse-JSON precedence (see that
+// function's docstring). Null = pre-B5c fallback (OVERRIDES.crewExclusions
+// only). Set/cleared by runPlan inside the same try/finally that protects
+// activeForceAssignments — both must reset on every exit path so the next run
+// (and any test that calls runPlan back-to-back) starts clean.
+let activeCrewExclusions = null;
 
 // B4: translate normalized Manual Overrides board rows into the planner's
 // internal primitives. Pure — no monday I/O.
@@ -1346,7 +1381,7 @@ function allocateStationWeek(grid, job, station, week, hours, candidates) {
     if (!slot.subcontractor) {
       const ruleHit = hardRuleViolation(crew, station, job.subtype, week);
       if (ruleHit) { rejections.push({ crew, reason: `hard rule: ${ruleHit}` }); continue; }
-      const exclHit = jobExclusionViolation(crew, job.id);
+      const exclHit = jobExclusionViolation(crew, job.id, station, week);
       if (exclHit) { rejections.push({ crew, reason: `excluded: ${exclHit}` }); continue; }
     }
     // Subcontractor slots: no monday parent, but must match station + (optionally) job
@@ -1472,7 +1507,7 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
     const primariesAvailableThisWeek = primary.filter(c => {
       if (!grid[c]?.[wk]?.parentId || grid[c][wk].available <= 0) return false;
       if (hardRuleViolation(c, station, job.subtype, wk)) return false;
-      if (jobExclusionViolation(c, job.id)) return false;
+      if (jobExclusionViolation(c, job.id, station, wk)) return false;
       const softCap = grid[c][wk].available * SOFT_CAP_MULTIPLIER;
       if (grid[c][wk].committed >= softCap) return false;
       return true;
@@ -1552,11 +1587,13 @@ async function runPlan(boards) {
       console.log(`  row ${u.rowId}: ${u.reason}`);
     }
   }
-  // Activate merged forceAssignments view; getForceAssignments() reads from
-  // here for the duration of this run. The try/finally further down restores
-  // it so a thrown error doesn't leak module state into subsequent runs
-  // (matters for tests + the future B5 two-pass driver).
+  // Activate merged forceAssignments + crewExclusions view; getForceAssignments()
+  // and jobExclusionViolation() read from these for the duration of this run.
+  // The try/finally further down restores both to null so a thrown error
+  // doesn't leak module state into subsequent runs (matters for tests + the
+  // B5 two-pass driver that calls runPlan back-to-back).
   activeForceAssignments = forceMerge.merged;
+  activeCrewExclusions   = exclMerge.merged;
   try {
 
   // Filter to active jobs (Not Started or Scheduled)
@@ -1898,6 +1935,7 @@ async function runPlan(boards) {
   return report;
   } finally {
     activeForceAssignments = null;
+    activeCrewExclusions   = null;
   }
 }
 

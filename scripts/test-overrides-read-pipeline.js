@@ -22,6 +22,10 @@ const {
   translateOverrideRows,
   mergeForceAssignments,
   mergeCrewExclusions,
+  runPlan,
+  getMondayOfWeek,
+  addDays,
+  toISO,
 } = require('./rebalance-schedule.js');
 
 const failures = [];
@@ -320,6 +324,123 @@ function normRow(overrides = {}) {
       check('B: conflict flagged', b.conflicts.length === 1, JSON.stringify(b.conflicts));
       check('B: conflict identifies (crew, jobId)', b.conflicts[0]?.crew === 'Paisios' && b.conflicts[0]?.jobId === 'Y1', JSON.stringify(b.conflicts[0]));
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 12 — B5c gap closure: a pure-clear board row's fine-grained exclusion
+  // must actually prevent the planner from routing (job × station × week) to
+  // the excluded crew. Pre-B5c, mergeCrewExclusions computed a board[]
+  // exclusion list but jobExclusionViolation didn't consult it, so the
+  // exclusion was effectively a no-op for auto-routing. Post-B5c, the
+  // module-scope `activeCrewExclusions` set is consulted on every routing
+  // decision (matching the activeForceAssignments pattern from B4).
+  //
+  // Approach: run runPlan TWICE on near-identical synthetic boards — first
+  // with no override rows (baseline), then with a pure-clear row targeting
+  // the baseline's eng-week placement. Assert the excluded crew loses the
+  // placement on the second run.
+  //
+  // Uses real runPlan (no I/O — every loader is bypassed by passing pre-built
+  // boards directly). MONDAY_API_TOKEN not required.
+  // -------------------------------------------------------------------------
+  console.log('\nTest 12: pure-clear board row affects placement (B5c gap closure)');
+  {
+    const CREWS = ['Chris', 'Jonathan', 'Paisios', 'Rob', 'Ian', 'Spencer', 'Ken', 'Bob'];
+    const BOB_START = '2026-05-18';
+    function buildParents() {
+      const today = new Date();
+      const firstMonday = toISO(getMondayOfWeek(today));
+      const parents = [];
+      let id = 9000;
+      for (let i = 0; i < 24; i++) {
+        const wk = toISO(getMondayOfWeek(addDays(new Date(firstMonday + 'T00:00:00Z'), i * 7)));
+        for (const crew of CREWS) {
+          if (crew === 'Bob' && wk < BOB_START) continue;
+          parents.push({ parentId: String(id++), week: wk, crew, base: 40, timeOff: 0, nonProd: 0 });
+        }
+      }
+      return parents;
+    }
+    // Engineering-only Frameless job, 8 weeks out. Frameless Engineering primary
+    // = ['Chris']; secondary = ['Paisios', 'Jonathan', 'Rob']. With Chris excluded
+    // for (this job × Engineering × eng-week), Paisios picks up.
+    const today = new Date();
+    const deliveryWeek = toISO(getMondayOfWeek(addDays(today, 8 * 7)));
+    const SYNTHETIC_JOB = {
+      id: 'TEST-PL-1',
+      name: 'B5c synthetic eng-only job',
+      status: 'Not Started',
+      subtype: 'Res - Frameless',
+      delivery: deliveryWeek,
+      masterPmId: 'TEST-MPM-1',
+      hours: { eng: 8, panel: 0, bench: 0, prefin: 0, postfin: 0 },
+      formulaHours: { eng: 8, panel: 0, bench: 0, prefin: 0, postfin: 0 },
+      finishingDays: 0,
+      pLam: true, // skip finish-cycle gate
+      notes: '',
+      customWindow: null,
+      parallelPostFin: false,
+      overrideNote: null,
+    };
+
+    // Silence runPlan's console.log noise during the two passes.
+    const realLog = console.log;
+    const realErr = console.error;
+    const baselineBoards = {
+      jobs: [SYNTHETIC_JOB],
+      crewParents: buildParents(),
+      timeOff: [],
+      existingSubs: [],
+      overrideRows: [],
+    };
+    console.log = () => {}; console.error = () => {};
+    let baselineReport;
+    try { baselineReport = await runPlan(baselineBoards); }
+    finally { console.log = realLog; console.error = realErr; }
+
+    const engPlacementsBaseline = (baselineReport.placements || []).filter(
+      p => p.jobId === 'TEST-PL-1' && p.station === 'Engineering'
+    );
+    check('baseline produced exactly 1 engineering placement', engPlacementsBaseline.length === 1, JSON.stringify(engPlacementsBaseline));
+    check('baseline engineering placement is on Chris (primary)', engPlacementsBaseline[0]?.crew === 'Chris', JSON.stringify(engPlacementsBaseline[0]));
+
+    const engWeek = engPlacementsBaseline[0]?.week;
+    const chrisParentForEngWeek = baselineBoards.crewParents.find(p => p.crew === 'Chris' && p.week === engWeek);
+    check('found Chris parent row for the eng-week', !!chrisParentForEngWeek, `engWeek=${engWeek}`);
+
+    // Now: same boards + ONE pure-clear override row excluding Chris from
+    // (this job × Engineering × eng-week). Post-B5c, Chris is filtered out
+    // of the candidate list; Paisios (next secondary) takes the placement.
+    const excludedBoards = {
+      ...baselineBoards,
+      overrideRows: [{
+        rowId: 'PC-1',
+        jobMpmId: 'TEST-MPM-1',
+        station: 'Engineering',
+        fromCrewParentId: chrisParentForEngWeek?.parentId,
+        fromWeek: engWeek,
+        toCrewParentId: null,
+        toWeek: null,
+        hours: 8,
+        status: 'Pending',
+        allowOverCap: false,
+      }],
+    };
+    console.log = () => {}; console.error = () => {};
+    let excludedReport;
+    try { excludedReport = await runPlan(excludedBoards); }
+    finally { console.log = realLog; console.error = realErr; }
+
+    const engPlacementsExcluded = (excludedReport.placements || []).filter(
+      p => p.jobId === 'TEST-PL-1' && p.station === 'Engineering'
+    );
+    check('exclusion run produced exactly 1 engineering placement', engPlacementsExcluded.length === 1, JSON.stringify(engPlacementsExcluded));
+    check('exclusion run: NO engineering placement on Chris for the eng-week',
+      !engPlacementsExcluded.some(p => p.crew === 'Chris' && p.week === engWeek),
+      JSON.stringify(engPlacementsExcluded));
+    check('exclusion run: a non-Chris secondary picked up the placement',
+      ['Paisios', 'Jonathan', 'Rob'].includes(engPlacementsExcluded[0]?.crew),
+      `got ${engPlacementsExcluded[0]?.crew || '(none)'} from ${JSON.stringify(engPlacementsExcluded[0])}`);
   }
 
   console.log();
