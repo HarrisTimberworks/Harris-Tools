@@ -2141,6 +2141,7 @@ async function autoCreateCrewParents(missing, gqlFn, opts = {}) {
 // ============================================================================
 
 module.exports = {
+  gql,
   loadAll,
   loadOverridesBoard,
   runPlan,

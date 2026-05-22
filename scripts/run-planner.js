@@ -44,6 +44,7 @@ const fs = require('fs');
 const path = require('path');
 const reb = require('./rebalance-schedule.js');
 const { validateAll: realValidateAll } = require('./validate-overrides.js');
+const { writeRowDecisions: realWriteRowDecisions } = require('./writeback-overrides.js');
 
 function isoOfDate(d) {
   const y = d.getUTCFullYear();
@@ -57,10 +58,13 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   const _runPlan       = deps.runPlan       || reb.runPlan;
   const _runExecute    = deps.runExecute    || reb.runExecute;
   const _validateAll   = deps.validateAll   || realValidateAll;
+  const _writeRowDecisions = deps.writeRowDecisions || realWriteRowDecisions;
+  const _gqlFn         = deps.gqlFn         || reb.gql;
   const _findLatest    = deps.findLatestPlanFile || reb.findLatestPlanFile;
   const _fs            = deps.fs            || fs;
   const _logsDir       = deps.logsDir       || path.join(__dirname, '..', 'logs');
   const _now           = deps.now           || (() => new Date());
+  const _dryRun        = process.env.DRY_RUN === '1';
 
   const todayISO = isoOfDate(_now());
 
@@ -106,6 +110,21 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   for (const c of validation.conflicts) {
     console.log(`  ✗ row ${c.rowId}: ${c.reason}`);
   }
+
+  // B6 writeback — fires at --plan time (deliberate spec deviation, see
+  // writeback-overrides.js docstring). Conflicts surface on the board the
+  // moment they're known; accepted rows are marked Applied even though pass 2
+  // hasn't run yet — the decision is already final, pass 2 just produces the
+  // plan that reflects those decisions. Empty validation → zero-row no-op.
+  console.log('\n=== OVERRIDE WRITEBACK ===');
+  if (_dryRun) console.log('  DRY RUN MODE — no mutations will fire');
+  const writeback = await _writeRowDecisions(validation, {
+    gqlFn: _gqlFn,
+    today: todayISO,
+    dryRun: _dryRun,
+  });
+  console.log(`  written: ${writeback.written}, skipped: ${writeback.skipped}, errors: ${writeback.errors.length}`);
+  for (const e of writeback.errors) console.log(`  ✗ row ${e.rowId}: ${e.error}`);
 
   // Pass 2: re-run runPlan with only the accepted board rows in overrideRows.
   // Look up original raw rows by rowId so translateOverrideRows (inside runPlan)

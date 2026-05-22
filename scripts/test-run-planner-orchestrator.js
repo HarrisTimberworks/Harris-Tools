@@ -107,6 +107,10 @@ function makeFakeBoards() {
         conflicts: [],
       };
     };
+    const stubWriteRowDecisions = async (validation, opts) => {
+      callLog.push(`writeRowDecisions:accepted=${validation.accepted.length}:conflicts=${validation.conflicts.length}`);
+      return { written: validation.accepted.length + validation.conflicts.length, skipped: 0, errors: [] };
+    };
 
     const fakeFs = makeFakeFs();
     const realLog = console.log; console.log = () => {};
@@ -118,6 +122,7 @@ function makeFakeBoards() {
           loadAll: stubLoadAll,
           runPlan: stubRunPlan,
           validateAll: stubValidateAll,
+          writeRowDecisions: stubWriteRowDecisions,
           fs: fakeFs.fs,
           logsDir: '/fake/logs',
           now: () => new Date('2026-05-22T20:00:00Z'),
@@ -130,14 +135,16 @@ function makeFakeBoards() {
     check('loadAll called exactly once', callLog.filter(s => s === 'loadAll').length === 1, JSON.stringify(callLog));
     check('runPlan called exactly twice', callLog.filter(s => s.startsWith('runPlan:')).length === 2, JSON.stringify(callLog));
     check('validateAll called exactly once', callLog.filter(s => s.startsWith('validateAll:')).length === 1, JSON.stringify(callLog));
-    check('call order: loadAll → runPlan(pass1) → validateAll → runPlan(pass2)',
+    check('writeRowDecisions called exactly once', callLog.filter(s => s.startsWith('writeRowDecisions:')).length === 1, JSON.stringify(callLog));
+    check('call order: loadAll → runPlan(pass1) → validateAll → writeRowDecisions → runPlan(pass2)',
       callLog[0] === 'loadAll'
       && callLog[1].startsWith('runPlan:1')
       && callLog[2].startsWith('validateAll')
-      && callLog[3].startsWith('runPlan:2'),
+      && callLog[3].startsWith('writeRowDecisions')
+      && callLog[4].startsWith('runPlan:2'),
       JSON.stringify(callLog));
     check('pass-1 runPlan saw zero overrideRows (baseline)', callLog[1] === 'runPlan:1:overrideRows=0', JSON.stringify(callLog));
-    check('pass-2 runPlan saw the accepted row count (1)', callLog[3] === 'runPlan:2:overrideRows=1', JSON.stringify(callLog));
+    check('pass-2 runPlan saw the accepted row count (1)', callLog[4] === 'runPlan:2:overrideRows=1', JSON.stringify(callLog));
     check('result.baselinePlan === pass-1 return', result?.baselinePlan === baselineReport, JSON.stringify(Object.keys(result || {})));
     check('result.finalPlan === pass-2 return',    result?.finalPlan    === finalReport,    JSON.stringify(Object.keys(result || {})));
     check('result.validation has accepted + conflicts', result?.validation?.accepted?.length === 1 && Array.isArray(result?.validation?.conflicts), JSON.stringify(result?.validation));
@@ -147,10 +154,11 @@ function makeFakeBoards() {
   {
     const baselineReport = { mode: 'plan', placements: [], capacityGrid: {}, warnings: [] };
     const finalReport    = { mode: 'plan', placements: [{ crew: 'Ian' }], capacityGrid: {}, warnings: [] };
-    const stubLoadAll      = async () => makeFakeBoards();
+    const stubLoadAll          = async () => makeFakeBoards();
     let runPlanCalls = 0;
-    const stubRunPlan      = async () => (++runPlanCalls === 1 ? baselineReport : finalReport);
-    const stubValidateAll  = () => ({ accepted: [], conflicts: [] });
+    const stubRunPlan          = async () => (++runPlanCalls === 1 ? baselineReport : finalReport);
+    const stubValidateAll      = () => ({ accepted: [], conflicts: [] });
+    const stubWriteRowDecisions = async () => ({ written: 0, skipped: 0, errors: [] });
 
     const fakeFs = makeFakeFs();
     const realLog = console.log; console.log = () => {};
@@ -158,7 +166,7 @@ function makeFakeBoards() {
       await runPlanner({
         mode: 'plan',
         deps: {
-          loadAll: stubLoadAll, runPlan: stubRunPlan, validateAll: stubValidateAll,
+          loadAll: stubLoadAll, runPlan: stubRunPlan, validateAll: stubValidateAll, writeRowDecisions: stubWriteRowDecisions,
           fs: fakeFs.fs, logsDir: '/fake/logs', now: () => new Date('2026-05-22T20:00:00Z'),
         },
       });
@@ -202,6 +210,7 @@ function makeFakeBoards() {
       accepted: [{ rowId: 'R1', decision: 'accepted' }],
       conflicts: [{ rowId: 'R2', decision: 'conflict', reason: 'synthetic' }],
     });
+    const stubWriteRowDecisions = async () => ({ written: 2, skipped: 0, errors: [] });
 
     const fakeFs = makeFakeFs();
     const realLog = console.log; console.log = () => {};
@@ -209,7 +218,7 @@ function makeFakeBoards() {
       await runPlanner({
         mode: 'plan',
         deps: {
-          loadAll: stubLoadAll, runPlan: stubRunPlan, validateAll: stubValidateAll,
+          loadAll: stubLoadAll, runPlan: stubRunPlan, validateAll: stubValidateAll, writeRowDecisions: stubWriteRowDecisions,
           fs: fakeFs.fs, logsDir: '/fake/logs', now: () => new Date('2026-05-22T20:00:00Z'),
         },
       });
@@ -267,6 +276,7 @@ function makeFakeBoards() {
       accepted:  [{ rowId: 'R1', decision: 'accepted' }],
       conflicts: [{ rowId: 'R2', decision: 'conflict', reason: 'too tall' }],
     });
+    const stubWriteRowDecisions = async () => ({ written: 1, skipped: 0, errors: [] });
     const fakeFs = makeFakeFs();
 
     const realLog = console.log;
@@ -275,7 +285,7 @@ function makeFakeBoards() {
       await runPlanner({
         mode: 'plan',
         deps: {
-          loadAll: stubLoadAll, runPlan: stubRunPlan, validateAll: stubValidateAll,
+          loadAll: stubLoadAll, runPlan: stubRunPlan, validateAll: stubValidateAll, writeRowDecisions: stubWriteRowDecisions,
           fs: fakeFs.fs, logsDir: '/fake/logs', now: () => new Date('2026-05-22T20:00:00Z'),
         },
       });
@@ -286,6 +296,72 @@ function makeFakeBoards() {
     check('accepted count printed (1)', /accept[^\n]*1/i.test(blob), blob.slice(0, 600));
     check('conflict count printed (1)', /conflict[^\n]*1/i.test(blob), blob.slice(0, 600));
     check('rejected row id surfaced in console',  /R2/.test(blob), blob.slice(0, 800));
+  }
+
+  console.log('\nTest 7: --plan mode — writeRowDecisions receives the validation result + gqlFn + today');
+  {
+    let writebackInvocations = [];
+    const stubLoadAll      = async () => makeFakeBoards();
+    let pass = 0;
+    const stubRunPlan      = async () => (++pass, { mode: 'plan', placements: [], capacityGrid: {}, warnings: [] });
+    const stubValidateAll  = () => ({
+      accepted: [{ rowId: 'R-ACCEPT', decision: 'accepted' }],
+      conflicts: [{ rowId: 'R-CONFLICT', decision: 'conflict', reason: 'past delivery' }],
+    });
+    const stubWriteRowDecisions = async (validation, opts) => {
+      writebackInvocations.push({ validation, opts });
+      return { written: 2, skipped: 0, errors: [] };
+    };
+    const stubGqlFn = async () => ({});
+    const fakeFs = makeFakeFs();
+    const realLog = console.log; console.log = () => {};
+    try {
+      await runPlanner({
+        mode: 'plan',
+        deps: {
+          loadAll: stubLoadAll, runPlan: stubRunPlan, validateAll: stubValidateAll,
+          writeRowDecisions: stubWriteRowDecisions, gqlFn: stubGqlFn,
+          fs: fakeFs.fs, logsDir: '/fake/logs', now: () => new Date('2026-05-22T20:00:00Z'),
+        },
+      });
+    } finally { console.log = realLog; }
+
+    check('writeRowDecisions called once', writebackInvocations.length === 1, JSON.stringify(writebackInvocations));
+    const { validation, opts } = writebackInvocations[0] || {};
+    check('validation arg has 1 accepted + 1 conflict',
+      validation?.accepted?.length === 1 && validation?.conflicts?.length === 1,
+      JSON.stringify(validation));
+    check('opts.gqlFn is the injected stub', opts?.gqlFn === stubGqlFn, `opts.gqlFn===stubGqlFn? ${opts?.gqlFn === stubGqlFn}`);
+    check('opts.today is today ISO string', opts?.today === '2026-05-22', `today=${opts?.today}`);
+    check('opts.dryRun defaults to false (no DRY_RUN env)', opts?.dryRun === false, `dryRun=${opts?.dryRun}`);
+  }
+
+  console.log('\nTest 8: --plan mode — DRY_RUN=1 environment variable propagates as opts.dryRun=true');
+  {
+    let received;
+    const stubLoadAll      = async () => makeFakeBoards();
+    let pass = 0;
+    const stubRunPlan      = async () => (++pass, { mode: 'plan', placements: [], capacityGrid: {}, warnings: [] });
+    const stubValidateAll  = () => ({ accepted: [], conflicts: [] });
+    const stubWriteRowDecisions = async (_, opts) => { received = opts; return { written: 0, skipped: 0, errors: [] }; };
+    const fakeFs = makeFakeFs();
+    const realLog = console.log; console.log = () => {};
+    const prevEnv = process.env.DRY_RUN;
+    process.env.DRY_RUN = '1';
+    try {
+      await runPlanner({
+        mode: 'plan',
+        deps: {
+          loadAll: stubLoadAll, runPlan: stubRunPlan, validateAll: stubValidateAll,
+          writeRowDecisions: stubWriteRowDecisions,
+          fs: fakeFs.fs, logsDir: '/fake/logs', now: () => new Date('2026-05-22T20:00:00Z'),
+        },
+      });
+    } finally {
+      console.log = realLog;
+      if (prevEnv === undefined) delete process.env.DRY_RUN; else process.env.DRY_RUN = prevEnv;
+    }
+    check('opts.dryRun === true under DRY_RUN=1', received?.dryRun === true, `dryRun=${received?.dryRun}`);
   }
 
   console.log();
