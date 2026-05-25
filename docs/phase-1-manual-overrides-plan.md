@@ -971,6 +971,84 @@ Total Phase 1 range 26–37 hrs is plausible; plan for the upper bound.
 
 ---
 
+## B7 results — 2026-05-25
+
+9-row smoke matrix entered in Manual Overrides board Active group, exercised via `node scripts/run-planner.js --plan`. Results captured here per the B7 task definition (D.4 / E7) plus the optional consistency-fail row from E.2.
+
+### Headline
+
+- **Validation decisions: 9/9 match expected.** 6 Applied, 3 Conflict, no surprises in the validator's verdict per row.
+- **Monday writeback: 9/9 wrote correctly.** Status flipped, Conflict Reason populated on the 3 conflict rows, Last Run stamped 2026-05-25 on all 9.
+- **Pass-2 plan reflection: 4/9 match, 5/9 deviate.** The 3 expected-Conflict rows correctly produced no placement (rows 6, 7, 9). Row 2 (pure clear) correctly removed Bob/2026-06-15/Post Fin/R5-P2 with auto-rerouting to Ian/2026-06-15. **The 5 force-based rows (1, 3, 4, 5, 8) were marked Applied on monday but did NOT land in Pass 2.**
+
+### Per-row outcomes
+
+- **Row 1** *Smoke 1: pure assign Liz Stapp Field* (Jonathan / 2026-06-08 / Field / 4h)
+  Expected: Applied + placement appears. **Actual: Status=Applied, writeback OK, but Pass 2 has no Jonathan/2026-06-08/Field/Liz Stapp placement. Deviation.**
+
+- **Row 2** *Smoke 2: pure clear Bob 6-15 R5-P2 Post Fin*
+  Expected: Applied + Bob/6-15/Post Fin/R5-P2 absent in Pass 2. **Actual: ✓ matches. Bob 6-15 went from 8/40 → 0/40; the freed 8h auto-re-routed to Ian 6-15 (12/40 → 20/40).**
+
+- **Row 3** *Smoke 3: cross-week move McMorris Pre Fin Spencer 6-01 → 6-08* (16.45h)
+  Expected: Spencer/6-08/Pre Fin/McMorris appears, Spencer/6-01 same disappears. **Actual: Status=Applied, but Pass 2 has Spencer/6-01/Pre Fin/McMorris/16.45h still there and no 6-08 placement. Deviation.**
+
+- **Row 4** *Smoke 4: split 1/2 R5-P2 bench Ian 6-08 → Ian 6-15* (20h)
+  Expected: Ian/6-15/Bench/R5-P2/20h appears. **Actual: Status=Applied, but Pass 2 has no Ian/6-15/Bench/R5-P2 placement. Ian 6-08 still carries the original 37.25h. Deviation.**
+
+- **Row 5** *Smoke 5: split 2/2 R5-P2 bench Ian 6-08 → Bob 6-15* (17.25h)
+  Expected: Bob/6-15/Bench/R5-P2/17.25h appears. **Actual: Status=Applied, but Pass 2 has no Bob/6-15/Bench/R5-P2 placement. Deviation.**
+
+- **Row 6** *Smoke 6: Quince P&S → past delivery* (To Week 6-22, delivery 6-12)
+  Expected: Conflict with delivery-date reason. **Actual: ✓ Status=Conflict, Conflict Reason="pin week 2026-06-22 is past job F&B - Quince Ave delivery date 2026-06-12 (delivery week 2026-06-08)".**
+
+- **Row 7** *Smoke 7: Atom Pre Fin Bob 6-22 over cap (no Allow)* (+25h on 18.5/40)
+  Expected: Conflict with capacity reason. **Actual: ✓ Status=Conflict, Conflict Reason="Bob 2026-06-22 would be 43.50/40 hrs (over cap by 3.50). Tick Allow Over-Cap to apply anyway."**
+
+- **Row 8** *Smoke 8: Atom Pre Fin Ian 6-22 over cap with Allow* (+25h on 18.5/40, Allow Over-Cap checked)
+  Expected: Applied + soft-warn in console + placement appears. **Actual: Status=Applied + soft-warn correctly logged in console ("Ian 2026-06-22 would be 43.50/40 (over cap by 3.50 hrs) — Allow Over-Cap is checked"), but Pass 2 has no Ian/6-22/Pre Fin/Atom placement. Deviation.**
+
+- **Row 9** *Smoke 9: McMorris Panel Ken 5-25 consistency fail* (request 10h, baseline has 2.4h)
+  Expected: Conflict with consistency reason. **Actual: ✓ Status=Conflict, Conflict Reason="baseline allocates only 2.40h to Ken × Panel Processing × 2026-05-25 for this job; row requests 10h".**
+
+### Root cause of the 5 deviations — known limitation
+
+`applyForceAssignments(grid, job, station, week, weekHours)` only fires from inside `scheduleStation`'s iteration over the job's computed station window (`scripts/rebalance-schedule.js:1459`) and the Pack & Ship + Delivery loop (`scripts/rebalance-schedule.js:1749`). For a force whose (job × station × week) tuple is **outside** that window, `scheduleStation` never visits the tuple, so the matched force in `activeForceAssignments` is silently dropped. No warning fires because `grid[crew][week]` does exist — the absent thing is the iteration that would have looked the force up.
+
+The 5 deviating rows all hit this:
+
+- **Row 1 — Field.** "Field" is not in the planner's station vocabulary at all (`STATION_ORDER`, lines 132–138, lists only Engineering / Panel Processing / Benchwork / Pre Fin / Post Fin / Pack & Ship / Delivery). `scheduleStation` is never invoked with Field. Any Field-stationed override is unreachable by Phase 1 force machinery. The override board exposes Field in its dropdown, but the planner has no execution path for it.
+- **Row 3 — Spencer 2026-06-08 Pre Fin McMorris.** McMorris Pre Fin window is 2026-05-18 → 2026-06-04 (cf. baseline warning "SH - McMorris / Pre Fin Cab Assembly: 10.97 hrs could not be placed within window 2026-05-18 → 2026-06-04"). 6-08 is past window end → force silently dropped.
+- **Rows 4, 5 — Ian/Bob 2026-06-15 Bench R5-P2.** R5-P2 Bench window ends 2026-06-08 in baseline (placements live on 6-01 and 6-08 only). 6-15 is past window end → forces silently dropped.
+- **Row 8 — Ian 2026-06-22 Pre Fin Atom Computing.** Atom (delivery 2026-08-08) has no Pre Fin activity until late July; 6-22 is far before window start → force silently dropped.
+
+The validator (`scripts/validate-overrides.js`) does not have a "is the pinned (job × station × week) inside the job's planning window?" check. The 3 checks it does (delivery-date strict, consistency strict, capacity lenient) all pass on these rows because none of them inspect the job's computed window. So the validator accepts them, B6 writes Applied to monday, and Pass 2 silently no-ops the force.
+
+The pure clear (Row 2) is unaffected because `crewExclusions` are consulted at every routing decision via `jobExclusionViolation`, not gated by `scheduleStation`'s window iteration. So clears apply globally; assigns and moves apply only inside-window.
+
+### Recommendation — track as B7 follow-up
+
+This is a real Phase 1 gap, not a one-off smoke artifact. The user-facing failure mode is silent: the board row shows Status=Applied + Last Run today, but the plan doesn't reflect it. An operator entering a row that targets the wrong week (or any Field row) gets a green check and a broken plan with no surfaced reason. Options:
+
+1. **Add a fourth validation check** ("window-membership strict"): given the row's (jobMpmId, station, toWeek-or-fromWeek), reject if the week is outside the job's computed station window. Requires the validator to have access to `computeWindows(job)` output — currently `validateAll` doesn't take windows as input. Smallest-fix path; matches the spirit of the existing 3 strict checks.
+
+2. **Add a fourth check for "Field is unsupported"** specifically: if the row's station is "Field", reject with a Conflict reason explaining the planner has no execution path. (Or: remove Field from the dropdown until Phase 2/3 wires Field placement into the executor.)
+
+3. **Surface "force silently dropped" as a planner warning**: instrument `getForceAssignments`'s consumed flag — at end of run, walk `activeForceAssignments` and warn about any board-sourced force whose `_sourceRowId` was never consumed. Then the writeback can flip the row to Conflict with reason "force did not land — likely outside station window". Catches the failure at execute-time but after-the-fact.
+
+Strawman: pick (1) + (2) as the Phase 1 close-out — same validator, two more checks, fully analogous in shape to the existing strict checks. (3) is a Phase 2/3 add for unattended runs.
+
+Filing this against B7 follow-up alongside the consistency-fail row that's now operational (Row 9). Do NOT declare B7 done until (1)+(2) land OR Chris consciously accepts (3) as the deferred fix.
+
+### Cleanup status
+
+- 9 smoke rows remain on Manual Overrides board Active group. Per task brief, Chris cleans these up via monday UI as part of B7 wrap-up.
+- No code/test changes made during Phase 3 of B7. Doc-only update.
+- Plan JSON: `logs/rebalance-plan-2026-05-25.json` (final post Pass 2).
+- Validation result JSON: `logs/override-validation-2026-05-25.json`.
+- Full console capture: `logs/b7-runplanner-stdout.txt`.
+
+---
+
 ## Section F — Out of scope for Phase 1
 
 Do NOT attempt these in Phase 1 — they belong to later phases:
