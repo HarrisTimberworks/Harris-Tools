@@ -81,6 +81,48 @@ function buildSyntheticCrewParents(weeksOut = 24) {
     }
   }
 
+  console.log('\nTest 1b: runPlan() — savePath: null isolates writes from logs/rebalance-plan-<today>.json (production-pollution guard)');
+  {
+    const os = require('os');
+    const fs = require('fs');
+    const path = require('path');
+    const productionLogsDir = path.join(__dirname, '..', 'logs');
+    const todayPath = path.join(productionLogsDir, `rebalance-plan-${new Date().toISOString().slice(0, 10)}.json`);
+    // Snapshot the production file's content (if any) BEFORE the test runs.
+    const before = fs.existsSync(todayPath) ? fs.readFileSync(todayPath, 'utf8') : null;
+
+    // Reuse Test 2's synthetic-parent helper so A4's parent-row check doesn't
+    // abort the run before we get to the save-path branch we're testing.
+    const boards = {
+      jobs: [], crewParents: buildSyntheticCrewParents(24),
+      timeOff: [], existingSubs: [], overrideRows: [],
+    };
+    const realLog = console.log; const realErr = console.error;
+    console.log = () => {}; console.error = () => {};
+    try {
+      await runPlan(boards, { savePath: null });
+    } finally {
+      console.log = realLog; console.error = realErr;
+    }
+    const after = fs.existsSync(todayPath) ? fs.readFileSync(todayPath, 'utf8') : null;
+    check('production logs/rebalance-plan-<today>.json unchanged by runPlan({ savePath: null })',
+      before === after,
+      `before=${before === null ? '(absent)' : 'present'}, after=${after === null ? '(absent)' : 'present'}`);
+
+    // Also verify explicit savePath (string) DOES write to that path
+    const tmpFile = path.join(os.tmpdir(), `runplan-savepath-test-${process.pid}-${Date.now()}.json`);
+    console.log = () => {};
+    try {
+      await runPlan(boards, { savePath: tmpFile });
+    } finally {
+      console.log = realLog;
+    }
+    check('runPlan({ savePath: <explicit path> }) writes to that path',
+      fs.existsSync(tmpFile),
+      `expected file at ${tmpFile}`);
+    if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+  }
+
   console.log('\nTest 2: runPlan() with synthetic boards returns a plan report with expected top-level fields');
   {
     check('runPlan is exported', typeof runPlan === 'function', `typeof=${typeof runPlan}`);
@@ -101,7 +143,10 @@ function buildSyntheticCrewParents(weeksOut = 24) {
       console.error = () => {};
       let report;
       try {
-        report = await runPlan(boards);
+        // savePath: null — don't pollute logs/rebalance-plan-<today>.json
+        // with this test's empty-jobs fixture (see runPlan docstring +
+        // 2026-05-25 incident note + Test 1b above).
+        report = await runPlan(boards, { savePath: null });
       } finally {
         console.log = realLog;
         console.error = realErr;

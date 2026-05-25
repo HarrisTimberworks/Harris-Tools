@@ -359,9 +359,15 @@ function buildCrewTable(weekISO, plan, jobsById, timeOff, options) {
       let crewCell = '', loadCell = '';
       if (i === 0) {
         crewCell = crew;
-        loadCell = isSub
+        // NB: plan JSON serializes the available-capacity field as `slot.avail`
+      // (NOT `slot.available`) — see scripts/rebalance-schedule.js's runPlan
+      // output shape. Reading the wrong field name was the 2026-05-25
+      // Capacity View live-regen incident; the regression in
+      // scripts/test-capacity-view-section.js Test 26 anchors to the
+      // canonical shape via scripts/fixtures/sample-plan-snapshot.json.
+      loadCell = isSub
           ? formatLoadSub(slot?.committed)
-          : formatLoadRegular(slot?.committed, slot?.available);
+          : formatLoadRegular(slot?.committed, slot?.avail);
       }
       rows.push(`| ${crewCell} | ${loadCell} | ${jobName} | ${stationCell} | ${hrsCell} |`);
     });

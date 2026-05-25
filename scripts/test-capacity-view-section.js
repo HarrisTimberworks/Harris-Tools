@@ -76,7 +76,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 8 },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 8, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 8, avail: 40 } } },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
     check('starts with heading',          out.startsWith('## Week of 6/1 — '), `prefix: ${out.slice(0, 40)}`);
@@ -92,9 +92,9 @@ function jobsByIdFixture() {
         { crew: 'Bob',     week: '2026-06-08', jobId: 'PL-B', station: 'Benchwork', hours: 19.95 },
       ],
       capacityGrid: {
-        Ian:     { '2026-06-08': { committed: 8,     available: 40 } },
-        Spencer: { '2026-06-08': { committed: 4,     available: 40 } },
-        Bob:     { '2026-06-08': { committed: 19.95, available: 40 } },
+        Ian:     { '2026-06-08': { committed: 8,     avail: 40 } },
+        Spencer: { '2026-06-08': { committed: 4,     avail: 40 } },
+        Bob:     { '2026-06-08': { committed: 19.95, avail: 40 } },
       },
     });
     const out = buildWeekSection('2026-06-08', plan, jobsByIdFixture(), []);
@@ -117,7 +117,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 8 },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 8, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 8, avail: 40 } } },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
     check('table contains Ian row', /\| Ian \| 8 \/ 40 \| MAG - Roster 5 — Frameless \(P1\) \| Bench \| 8 \|/.test(out), out);
@@ -132,7 +132,7 @@ function jobsByIdFixture() {
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Pre Fin Cab Assembly', hours: 4 },
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Post Fin Cab Assembly', hours: 2 },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 14, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 14, avail: 40 } } },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
     check('first row has Crew + Load',
@@ -155,9 +155,9 @@ function jobsByIdFixture() {
         { crew: 'Ian',     week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 4 },
       ],
       capacityGrid: {
-        Spencer: { '2026-06-01': { committed: 4, available: 40 } },
-        Bob:     { '2026-06-01': { committed: 4, available: 40 } },
-        Ian:     { '2026-06-01': { committed: 4, available: 40 } },
+        Spencer: { '2026-06-01': { committed: 4, avail: 40 } },
+        Bob:     { '2026-06-01': { committed: 4, avail: 40 } },
+        Ian:     { '2026-06-01': { committed: 4, avail: 40 } },
       },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
@@ -175,7 +175,7 @@ function jobsByIdFixture() {
         { crew: 'BCH-Bench-sub', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 19.95 },
       ],
       capacityGrid: {
-        'BCH-Bench-sub': { '2026-06-01': { committed: 19.95, available: 0, subcontractor: true } },
+        'BCH-Bench-sub': { '2026-06-01': { committed: 19.95, avail: 0, subcontractor: true } },
       },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
@@ -193,7 +193,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 8, pinned: true },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 8, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 8, avail: 40 } } },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
     check('Hrs cell has italic *(pinned)*',
@@ -204,7 +204,7 @@ function jobsByIdFixture() {
   console.log('\nTest 9: PTO crew (no placements) — Load shows "PTO (40h)", other cells use em-dash');
   {
     const plan = makePlan({
-      capacityGrid: { Rob: { '2026-06-01': { committed: 0, available: 0, base: 40, timeOff: 40 } } },
+      capacityGrid: { Rob: { '2026-06-01': { committed: 0, avail: 0, base: 40, timeOff: 40 } } },
     });
     const timeOff = [{ crew: 'Rob', week: '2026-06-01', hours: 40 }];
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), timeOff);
@@ -220,7 +220,7 @@ function jobsByIdFixture() {
         { crew: 'Bob', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 45 },
       ],
       // 45 / 32 = 1.406, > 1.05 → 🔴
-      capacityGrid: { Bob: { '2026-06-01': { committed: 45, available: 32 } } },
+      capacityGrid: { Bob: { '2026-06-01': { committed: 45, avail: 32 } } },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
     check('Load shows 🔴', /\| Bob \| 45 \/ 32 🔴 \|/.test(out), out.match(/\| Bob[^\n]+/)?.[0]);
@@ -233,7 +233,7 @@ function jobsByIdFixture() {
         { crew: 'Bob', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 42 },
       ],
       // 42 / 40 = 1.05 exactly, NOT strictly > 1.05 → 🟡
-      capacityGrid: { Bob: { '2026-06-01': { committed: 42, available: 40 } } },
+      capacityGrid: { Bob: { '2026-06-01': { committed: 42, avail: 40 } } },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
     check('Load shows 🟡 at 1.05x', /\| Bob \| 42 \/ 40 🟡 \|/.test(out), out.match(/\| Bob[^\n]+/)?.[0]);
@@ -246,7 +246,7 @@ function jobsByIdFixture() {
         { crew: 'Spencer', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 38 },
       ],
       // 38 / 40 = 0.95 → 🟡
-      capacityGrid: { Spencer: { '2026-06-01': { committed: 38, available: 40 } } },
+      capacityGrid: { Spencer: { '2026-06-01': { committed: 38, avail: 40 } } },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
     check('Load shows 🟡 at 0.95', /\| Spencer \| 38 \/ 40 🟡 \|/.test(out), out.match(/\| Spencer[^\n]+/)?.[0]);
@@ -258,7 +258,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 20 },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 20, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 20, avail: 40 } } },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
     check('Load has no marker (20 / 40)', /\| Ian \| 20 \/ 40 \|/.test(out), out.match(/\| Ian[^\n]+/)?.[0]);
@@ -273,7 +273,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 8 },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 8, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 8, avail: 40 } } },
       finishingCycleReport: {
         rows: [
           { jobId: 'PL-A', jobName: 'MAG - Roster 5 — Frameless (P1)',
@@ -301,7 +301,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-06-08', jobId: 'PL-A', station: 'Benchwork', hours: 8 },
       ],
-      capacityGrid: { Ian: { '2026-06-08': { committed: 8, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-08': { committed: 8, avail: 40 } } },
     });
     const out = buildWeekSection('2026-06-08', plan, jobs, []);
     check('🚚 client delivery line',
@@ -315,7 +315,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-06-15', jobId: 'PL-A', station: 'Benchwork', hours: 8 },
       ],
-      capacityGrid: { Ian: { '2026-06-15': { committed: 8, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-15': { committed: 8, avail: 40 } } },
       finishingCycleReport: {
         rows: [
           { jobId: 'PL-A', jobName: 'MAG - Roster 5 — Frameless (P1)',
@@ -344,10 +344,10 @@ function jobsByIdFixture() {
         { crew: 'Ken',     week: '2026-06-01', jobId: 'PL-N',  station: 'Panel Processing', hours: 8 },
       ],
       capacityGrid: {
-        Ian:     { '2026-06-01': { committed: 8, available: 40 } },
-        Spencer: { '2026-06-01': { committed: 8, available: 40 } },
-        Bob:     { '2026-06-01': { committed: 8, available: 40 } },
-        Ken:     { '2026-06-01': { committed: 8, available: 40 } },
+        Ian:     { '2026-06-01': { committed: 8, avail: 40 } },
+        Spencer: { '2026-06-01': { committed: 8, avail: 40 } },
+        Bob:     { '2026-06-01': { committed: 8, avail: 40 } },
+        Ken:     { '2026-06-01': { committed: 8, avail: 40 } },
       },
     });
     const out = buildWeekSection('2026-06-01', plan, jobs, []);
@@ -388,7 +388,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 8 },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 8, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 8, avail: 40 } } },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
     check('priority item ends with "— delivery Fri 6/12"',
@@ -403,7 +403,7 @@ function jobsByIdFixture() {
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork',            hours: 8, pinned: true },
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Pre Fin Cab Assembly', hours: 4 },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 12, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 12, avail: 40 } } },
     });
     const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
     check('stations summary "Bench (8h, pinned) + PreFin (4h)"',
@@ -427,7 +427,7 @@ function jobsByIdFixture() {
         placements: [
           { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: full, hours: 2 },
         ],
-        capacityGrid: { Ian: { '2026-06-01': { committed: 2, available: 40 } } },
+        capacityGrid: { Ian: { '2026-06-01': { committed: 2, avail: 40 } } },
       });
       const out = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
       // Match the station column literally in the table.
@@ -444,7 +444,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 8 },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 8, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 8, avail: 40 } } },
     });
     const opts = {
       acceptedOverrides: [
@@ -461,7 +461,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 8 },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 8, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 8, avail: 40 } } },
     });
     const opts = {
       acceptedOverrides: [
@@ -478,7 +478,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 8 },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 8, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 8, avail: 40 } } },
     });
     const outNoOpts  = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), []);
     const outEmptyOpts = buildWeekSection('2026-06-01', plan, jobsByIdFixture(), [], {});
@@ -504,7 +504,7 @@ function jobsByIdFixture() {
       placements: [
         { crew: 'Ian', week: '2026-05-25', jobId: 'PL-A', station: 'Benchwork', hours: 4 },
       ],
-      capacityGrid: { Ian: { '2026-05-25': { committed: 4, available: 40 } } },
+      capacityGrid: { Ian: { '2026-05-25': { committed: 4, avail: 40 } } },
       finishingCycleReport: {
         rows: [
           { jobId: 'PL-A', jobName: 'Liz Stapp',   finishDrop: '2026-05-29', finishReturn: '2026-06-12', valid: true },
@@ -516,6 +516,44 @@ function jobsByIdFixture() {
     check('shared 📌 line lists both jobs',
       /📌 Fri 5\/29 — Liz Stapp \+ SH McMorris finish drops/.test(out),
       out.split('\n').find(l => l.includes('📌')) || 'no shared 📌 line');
+  }
+
+  // ==========================================================================
+  // Regression: real-plan-JSON snapshot — exercise C2 against the actual
+  // shape runPlan() emits, NOT against handcrafted fixtures.
+  //
+  // This guards against field-name drift like the 2026-05-25 production
+  // incident where C2 read `slot.available` but plan JSON serializes the
+  // field as `slot.avail` — handcrafted fixtures used the wrong name and
+  // tests passed against buggy code. The snapshot is the canonical anchor.
+  // ==========================================================================
+
+  console.log('\nTest 26: regression — buildWeekSection against scripts/fixtures/sample-plan-snapshot.json (real plan-JSON shape with slot.avail)');
+  {
+    const fs = require('fs');
+    const path = require('path');
+    const snapshot = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'sample-plan-snapshot.json'), 'utf8'));
+    const jobs = {
+      'PL-R5P1': { name: 'MAG - Roster 5 — Frameless (P1)', delivery: '2026-06-12', status: 'Scheduled' },
+      'PL-BCH':  { name: 'MAG - BCH',                       delivery: '2026-06-19', status: 'Scheduled' },
+    };
+    const out = buildWeekSection('2026-06-01', snapshot, jobs, []);
+    // Bob row: committed 35 / avail 32 → 35/32 = 1.094 > 1.05 → 🔴
+    check('Bob Load renders "35 / 32 🔴" using slot.avail (not "35 / 0 🔴" which would be the bug)',
+      /\| Bob \| 35 \/ 32 🔴 \|/.test(out),
+      out.match(/\| Bob[^\n]+/)?.[0] || 'no Bob row');
+    // Spencer row: committed 38 / avail 40 → 0.95 → 🟡
+    check('Spencer Load renders "38 / 40 🟡"',
+      /\| Spencer \| 38 \/ 40 🟡 \|/.test(out),
+      out.match(/\| Spencer[^\n]+/)?.[0] || 'no Spencer row');
+    // Ian row: committed 20 / avail 40 → 0.50 → blank marker
+    check('Ian Load renders "20 / 40" (no marker, under-cap)',
+      /\| Ian \| 20 \/ 40 \| /.test(out),
+      out.match(/\| Ian[^\n]+/)?.[0] || 'no Ian row');
+    // Sub row: avail 0, committed 19.95 → "19.95 / —"
+    check('BCH-Bench-sub Load renders "19.95 / —" (sub)',
+      /\| BCH-Bench-sub \| 19\.95 \/ — \|/.test(out),
+      out.match(/\| BCH-Bench-sub[^\n]+/)?.[0] || 'no sub row');
   }
 
   console.log();

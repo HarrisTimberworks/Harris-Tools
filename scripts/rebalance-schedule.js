@@ -1552,7 +1552,16 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
 // MAIN PLANNER
 // ============================================================================
 
-async function runPlan(boards) {
+// `opts.savePath` controls the on-disk plan file:
+//   - undefined (default): save to logs/rebalance-plan-<today>.json
+//   - null:                skip the save entirely (tests pass this to avoid
+//                          polluting the production logs/ path — see the
+//                          2026-05-25 incident where test-overrides-read-
+//                          pipeline.js's runPlan() call overwrote a real
+//                          iter-11 plan with B5c synthetic-fixture data)
+//   - <string path>:       save to that explicit path (tests can use a
+//                          tempdir for isolation + per-test assertions)
+async function runPlan(boards, opts = {}) {
   const { jobs, crewParents, timeOff, existingSubs, overrideRows = [] } = boards;
 
   console.log(`Loaded: ${jobs.length} jobs, ${crewParents.length} crew-week parents, ${timeOff.length} time off entries, ${existingSubs.length} existing subitems, ${overrideRows.length} active override row(s)`);
@@ -1865,11 +1874,15 @@ async function runPlan(boards) {
     }
   }
 
-  // Save plan file
-  const logsDir = path.join(__dirname, '..', 'logs');
-  if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
-  const planFile = path.join(logsDir, `rebalance-plan-${toISO(new Date())}.json`);
-  fs.writeFileSync(planFile, JSON.stringify(report, null, 2));
+  // Save plan file (unless opts.savePath === null — see runPlan docstring).
+  const savePath = opts.savePath === undefined
+    ? path.join(__dirname, '..', 'logs', `rebalance-plan-${toISO(new Date())}.json`)
+    : opts.savePath;
+  if (savePath !== null) {
+    const saveDir = path.dirname(savePath);
+    if (!fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
+    fs.writeFileSync(savePath, JSON.stringify(report, null, 2));
+  }
 
   // Console summary
   console.log('\n=== CAPACITY GRID ===');
@@ -1936,7 +1949,7 @@ async function runPlan(boards) {
   console.log('\n=== SUMMARY ===');
   console.log(`Total placements: ${allPlacements.length}`);
   console.log(`Existing subitems to delete: ${report.existingSubitemIdsToDelete.length}`);
-  console.log(`Plan saved to: ${planFile}`);
+  if (savePath !== null) console.log(`Plan saved to: ${savePath}`);
   console.log(`\nTo execute this plan: node scripts/rebalance-schedule.js --execute`);
 
   return report;

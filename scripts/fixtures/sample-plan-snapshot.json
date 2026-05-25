@@ -1,0 +1,19 @@
+{
+  "_comment": "Frozen real-shape plan-JSON snapshot for regression-testing capacity-view-generator against the actual planner output. Field names must match what rebalance-schedule.js's runPlan() emits — particularly slot.avail (NOT 'available'). Drift this file only when the planner's serialized shape genuinely changes; the point is that test fixtures that use the WRONG shape (e.g., 'available' instead of 'avail') can pass against buggy code, then break in production. This snapshot is the canonical anchor.",
+  "_sourceNote": "Hand-crafted minimal subset matching the shape of logs/rebalance-plan-<date>.json as produced by runPlan() — 2026-05-25 iter-11 example placements simplified. Covers all three capacity-threshold cases (🔴 over-cap, 🟡 at-cap, blank under-cap) plus a subcontractor row.",
+  "mode": "plan",
+  "generatedAt": "2026-05-25T20:00:00.000Z",
+  "placements": [
+    { "crew": "Bob",     "week": "2026-06-01", "hours": 35,    "parentId": "p-bob",  "station": "Post Fin Cab Assembly", "jobId": "PL-R5P1",  "jobName": "MAG - Roster 5 — Frameless (P1)", "masterPmId": "MPM-R5P1" },
+    { "crew": "Spencer", "week": "2026-06-01", "hours": 38,    "parentId": "p-spn",  "station": "Pre Fin Cab Assembly",  "jobId": "PL-R5P1",  "jobName": "MAG - Roster 5 — Frameless (P1)", "masterPmId": "MPM-R5P1" },
+    { "crew": "Ian",     "week": "2026-06-01", "hours": 20,    "parentId": "p-ian",  "station": "Benchwork",             "jobId": "PL-R5P1",  "jobName": "MAG - Roster 5 — Frameless (P1)", "masterPmId": "MPM-R5P1" },
+    { "crew": "BCH-Bench-sub", "week": "2026-06-01", "hours": 19.95, "parentId": "p-sub", "station": "Benchwork",       "jobId": "PL-BCH",   "jobName": "MAG - BCH",                        "masterPmId": "MPM-BCH" }
+  ],
+  "capacityGrid": {
+    "Bob":            { "2026-06-01": { "avail": 32, "committed": 35,    "timeOff": 0, "over": 3,    "assignments": [] } },
+    "Spencer":        { "2026-06-01": { "avail": 40, "committed": 38,    "timeOff": 0, "over": 0,    "assignments": [] } },
+    "Ian":            { "2026-06-01": { "avail": 40, "committed": 20,    "timeOff": 0, "over": 0,    "assignments": [] } },
+    "BCH-Bench-sub":  { "2026-06-01": { "avail": 0,  "committed": 19.95, "timeOff": 0, "over": 0,    "assignments": [], "subcontractor": true } }
+  },
+  "finishingCycleReport": { "rows": [], "skippedCount": 0, "invalidCount": 0 }
+}

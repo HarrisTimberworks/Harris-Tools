@@ -219,9 +219,9 @@ const EXPECTED_WEEKS = [
         { crew: 'Bob',     week: '2026-06-29', jobId: 'PL-A', station: 'Benchwork', hours: 8 },
       ],
       capacityGrid: {
-        Ian:     { '2026-06-01': { committed: 8, available: 40 } },
-        Spencer: { '2026-06-15': { committed: 8, available: 40 } },
-        Bob:     { '2026-06-29': { committed: 8, available: 40 } },
+        Ian:     { '2026-06-01': { committed: 8, avail: 40 } },
+        Spencer: { '2026-06-15': { committed: 8, avail: 40 } },
+        Bob:     { '2026-06-29': { committed: 8, avail: 40 } },
       },
     });
     const acceptedOverrides = [
@@ -251,9 +251,9 @@ const EXPECTED_WEEKS = [
       ],
       capacityGrid: {
         Ian: {
-          '2026-06-08': { committed: 8,  available: 40 },
-          '2026-09-07': { committed: 99, available: 40 },
-          '2026-05-25': { committed: 77, available: 40 },
+          '2026-06-08': { committed: 8,  avail: 40 },
+          '2026-09-07': { committed: 99, avail: 40 },
+          '2026-05-25': { committed: 77, avail: 40 },
         },
       },
     });
@@ -277,11 +277,11 @@ const EXPECTED_WEEKS = [
       ],
       capacityGrid: {
         Ian:     {
-          '2026-06-01': { committed: 12,    available: 40 },
-          '2026-06-08': { committed: 12,    available: 40 },
+          '2026-06-01': { committed: 12,    avail: 40 },
+          '2026-06-08': { committed: 12,    avail: 40 },
         },
-        Spencer: { '2026-06-01': { committed: 6,     available: 40 } },
-        Bob:     { '2026-06-01': { committed: 19.95, available: 40 } },
+        Spencer: { '2026-06-01': { committed: 6,     avail: 40 } },
+        Bob:     { '2026-06-01': { committed: 19.95, avail: 40 } },
       },
       finishingCycleReport: {
         rows: [{ jobId: 'PL-A', jobName: 'MAG R5-P1', finishDrop: '2026-06-05', finishReturn: '2026-06-19', valid: true }],
@@ -329,7 +329,7 @@ const EXPECTED_WEEKS = [
       placements: [
         { crew: 'Ian', week: '2026-06-01', jobId: 'PL-A', station: 'Benchwork', hours: 8 },
       ],
-      capacityGrid: { Ian: { '2026-06-01': { committed: 8, available: 40 } } },
+      capacityGrid: { Ian: { '2026-06-01': { committed: 8, avail: 40 } } },
     });
     const out = buildCapacityViewDoc(plan, JOBS_BY_ID, [], { generatedAt: REF_DATE });
     // The legend always has a 🔧 (it's a static symbol explanation). The

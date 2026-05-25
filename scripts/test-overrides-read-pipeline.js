@@ -439,7 +439,7 @@ function normRow(overrides = {}) {
     };
     console.log = () => {}; console.error = () => {};
     let baselineReport;
-    try { baselineReport = await runPlan(baselineBoards); }
+    try { baselineReport = await runPlan(baselineBoards, { savePath: null }); }
     finally { console.log = realLog; console.error = realErr; }
 
     const engPlacementsBaseline = (baselineReport.placements || []).filter(
@@ -472,7 +472,7 @@ function normRow(overrides = {}) {
     };
     console.log = () => {}; console.error = () => {};
     let excludedReport;
-    try { excludedReport = await runPlan(excludedBoards); }
+    try { excludedReport = await runPlan(excludedBoards, { savePath: null }); }
     finally { console.log = realLog; console.error = realErr; }
 
     const engPlacementsExcluded = (excludedReport.placements || []).filter(
