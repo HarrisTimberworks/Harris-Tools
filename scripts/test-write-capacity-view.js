@@ -30,6 +30,9 @@ const {
   saveMarkdownToDisk,
   getDocIdByObjectId,
   replaceCapacityViewBody,
+  // C4-followup additions
+  chunkMarkdownAtDividers,
+  addMarkdownToDocChunked,
 } = require('./write-capacity-view.js');
 
 const failures = [];
@@ -391,6 +394,257 @@ function makeFakeFs() {
       out.savedMarkdownPath);
     check('savedMarkdownPath matches an actual write', fakeFs.writes[out.savedMarkdownPath] === '# md\n',
       `path=${out.savedMarkdownPath}, writes=${Object.keys(fakeFs.writes)}`);
+  }
+
+  // ==========================================================================
+  // C4-followup Item A: cascade-delete skip (getAllBlockIds filters children)
+  // ==========================================================================
+  //
+  // monday's delete_doc_block cascade-deletes children when a parent is
+  // deleted (table cells inside a table parent, layout cells inside a
+  // layout, notice_box children). Pre-followup, getAllBlockIds returned
+  // every block ID; the writer then attempted N deletes that 404'd after
+  // their parents already cascaded. 5/25 first regen: 485 cascade-noise
+  // errors out of 1027 blocks read.
+  //
+  // Fix: read parent_block_id alongside id; filter to top-level blocks
+  // (parent_block_id null/undefined) so we never fire pointless deletes.
+
+  console.log('\nTest 23: Item A — getAllBlockIds filters out children (parent_block_id set), keeps only top-level');
+  {
+    const stub = async () => ({
+      docs: [{ blocks: [
+        { id: 't1', parent_block_id: null },        // table top-level
+        { id: 'c1', parent_block_id: 't1' },        // cell child — filter out
+        { id: 'c2', parent_block_id: 't1' },        // cell child — filter out
+        { id: 'h1', parent_block_id: null },        // top-level heading
+        { id: 'd1', parent_block_id: null },        // top-level divider
+        { id: 'nb1', parent_block_id: null },       // notice_box top-level
+        { id: 'nb-child', parent_block_id: 'nb1' }, // notice_box child — filter out
+      ]}],
+    });
+    const ids = await getAllBlockIds('doc-1', { gqlFn: stub, batchSize: 100 });
+    check('returned only top-level IDs',
+      JSON.stringify(ids) === JSON.stringify(['t1', 'h1', 'd1', 'nb1']),
+      JSON.stringify(ids));
+    check('child IDs (c1, c2, nb-child) excluded',
+      !ids.includes('c1') && !ids.includes('c2') && !ids.includes('nb-child'),
+      JSON.stringify(ids));
+  }
+
+  console.log('\nTest 24: Item A — pagination uses RAW blocks.length (batchSize check), NOT filtered count');
+  {
+    // Page 1: batch of 100 blocks of which 80 are children (only 20 top-level).
+    // raw length 100 === batchSize → must paginate to page 2.
+    // Page 2: 50 blocks of which 30 top-level → raw length 50 < batchSize → stop.
+    const calls = [];
+    const stub = async (_q, vars) => {
+      calls.push(vars.page);
+      if (vars.page === 1) {
+        const blocks = [];
+        for (let i = 0; i < 20; i++) blocks.push({ id: `top-p1-${i}`, parent_block_id: null });
+        for (let i = 0; i < 80; i++) blocks.push({ id: `child-p1-${i}`, parent_block_id: 'parent-x' });
+        return { docs: [{ blocks }] };
+      }
+      const blocks = [];
+      for (let i = 0; i < 30; i++) blocks.push({ id: `top-p2-${i}`, parent_block_id: null });
+      for (let i = 0; i < 20; i++) blocks.push({ id: `child-p2-${i}`, parent_block_id: 'parent-y' });
+      return { docs: [{ blocks }] };
+    };
+    const ids = await getAllBlockIds('doc-pag', { gqlFn: stub, batchSize: 100 });
+    check('paginated to page 2 (raw page-1 length 100 === batchSize triggers next page)',
+      JSON.stringify(calls) === JSON.stringify([1, 2]),
+      JSON.stringify(calls));
+    check('stopped after page 2 (raw page-2 length 50 < batchSize)', calls.length === 2,
+      JSON.stringify(calls));
+    check('returned 50 top-level IDs (20 from p1 + 30 from p2)',
+      ids.length === 50, `len=${ids.length}`);
+  }
+
+  // ==========================================================================
+  // C4-followup Item B: chunkMarkdownAtDividers + addMarkdownToDocChunked
+  // ==========================================================================
+  //
+  // monday's add_content_to_doc_from_markdown has an undocumented per-call
+  // block-count limit (somewhere around 500-600 blocks). Full 8-week C3
+  // output produces ~720+ blocks and returns INTERNAL_SERVER_ERROR
+  // (5/25 first live regen). Mitigation: split markdown at `---` divider
+  // boundaries before calling, one chunk per call, sequential.
+  //
+  // chunkMarkdownAtDividers is a pure helper; addMarkdownToDocChunked
+  // wraps the per-chunk add_content call.
+
+  console.log('\nTest 25: Item B — chunkMarkdownAtDividers empty/null input → []');
+  {
+    check('null → []',      Array.isArray(chunkMarkdownAtDividers(null)) && chunkMarkdownAtDividers(null).length === 0, JSON.stringify(chunkMarkdownAtDividers(null)));
+    check('undefined → []', Array.isArray(chunkMarkdownAtDividers()) && chunkMarkdownAtDividers().length === 0, JSON.stringify(chunkMarkdownAtDividers()));
+    check('"" → []',        Array.isArray(chunkMarkdownAtDividers('')) && chunkMarkdownAtDividers('').length === 0, JSON.stringify(chunkMarkdownAtDividers('')));
+  }
+
+  console.log('\nTest 26: Item B — no dividers → single chunk equal to input');
+  {
+    const md = '# Just text\n\nNo dividers here.\n';
+    const chunks = chunkMarkdownAtDividers(md);
+    check('1 chunk', chunks.length === 1, JSON.stringify(chunks));
+    check('chunk equals input', chunks[0] === md, JSON.stringify(chunks));
+  }
+
+  console.log('\nTest 27: Item B — single divider mid-stream → 2 chunks, first chunk includes the divider');
+  {
+    const md = 'A\n---\nB';
+    const chunks = chunkMarkdownAtDividers(md);
+    check('2 chunks',                 chunks.length === 2,                              JSON.stringify(chunks));
+    check('first chunk includes ---', chunks[0] === 'A\n---',                            JSON.stringify(chunks));
+    check('second chunk is "B"',      chunks[1] === 'B',                                 JSON.stringify(chunks));
+  }
+
+  console.log('\nTest 28: Item B — trailing divider does not produce empty chunk');
+  {
+    const md = 'A\n---\nB\n---\n';
+    const chunks = chunkMarkdownAtDividers(md);
+    check('2 chunks (no empty trailing)', chunks.length === 2, JSON.stringify(chunks));
+    check('first chunk includes its ---',  /---$/.test(chunks[0]), JSON.stringify(chunks));
+    check('second chunk includes its ---', /---\n?$/.test(chunks[1]), JSON.stringify(chunks));
+  }
+
+  console.log('\nTest 29: Item B — C3-shape (10 sections) → 10 chunks');
+  {
+    // Simulate the real C3 output: header --- (8 week sections each ending with ---) Legend
+    const md = [
+      '**Generated:** ... • **Source:** ... • **Edit:** ...',
+      '',
+      '---',
+      '## Week of 5/25 — 50.00 crew hrs',
+      '...table + priority...',
+      '---',
+      '## Week of 6/1 — 30.00 crew hrs',
+      '...content...',
+      '---',
+      '## Week of 6/8 — 0.00 crew hrs',
+      '...content...',
+      '---',
+      '## Week of 6/15 — 0.00 crew hrs',
+      '...content...',
+      '---',
+      '## Week of 6/22 — 0.00 crew hrs',
+      '...content...',
+      '---',
+      '## Week of 6/29 — 0.00 crew hrs',
+      '...content...',
+      '---',
+      '## Week of 7/6 — 0.00 crew hrs',
+      '...content...',
+      '---',
+      '## Week of 7/13 — 0.00 crew hrs',
+      '...content...',
+      '---',
+      '## Legend',
+      '- ...legend body...',
+      '',
+    ].join('\n');
+    const chunks = chunkMarkdownAtDividers(md);
+    check('produces 10 chunks (header + 8 weeks + legend)',
+      chunks.length === 10,
+      `chunks.length=${chunks.length}: ${chunks.map(c => c.split('\n')[0]).join(' | ')}`);
+    check('each chunk except the last ends with ---',
+      chunks.slice(0, -1).every(c => /---$/.test(c)),
+      'all middle chunks should end with their divider');
+    check('last chunk (legend) does not need trailing ---',
+      chunks[chunks.length - 1].includes('Legend'),
+      `last: ${chunks[chunks.length - 1].slice(0, 50)}`);
+  }
+
+  console.log('\nTest 30: Item B — addMarkdownToDocChunked: single-chunk markdown → 1 gqlFn call');
+  {
+    const md = '# small\n\nno dividers\n';
+    const calls = [];
+    const stub = async (q, vars) => {
+      calls.push(vars.markdown);
+      return { add_content_to_doc_from_markdown: { success: true, block_ids: ['b1', 'b2'], error: null } };
+    };
+    const out = await addMarkdownToDocChunked('doc-1', md, { gqlFn: stub, sleep: async () => {}, logger: silentLogger });
+    check('1 gqlFn call', calls.length === 1, `calls=${calls.length}`);
+    check('chunkCount === 1', out.chunkCount === 1, JSON.stringify(out));
+    check('aggregated 2 block_ids', out.blockIds.length === 2 && out.blockIds[0] === 'b1',
+      JSON.stringify(out.blockIds));
+  }
+
+  console.log('\nTest 31: Item B — addMarkdownToDocChunked: 3 chunks → 3 sequential gqlFn calls, block_ids aggregated');
+  {
+    const md = 'A\n---\nB\n---\nC';
+    const calls = [];
+    const stub = async (q, vars) => {
+      calls.push(vars.markdown);
+      const idx = calls.length;
+      return { add_content_to_doc_from_markdown: { success: true, block_ids: [`b${idx}-1`, `b${idx}-2`], error: null } };
+    };
+    const out = await addMarkdownToDocChunked('doc-1', md, { gqlFn: stub, sleep: async () => {}, logger: silentLogger });
+    check('3 gqlFn calls in sequence', calls.length === 3, JSON.stringify(calls.map(c => c.slice(0, 20))));
+    check('first call sees chunk 1',   calls[0].includes('A'),  calls[0]);
+    check('second call sees chunk 2',  calls[1].includes('B'),  calls[1]);
+    check('third call sees chunk 3',   calls[2].includes('C'),  calls[2]);
+    check('aggregated 6 block_ids',    out.blockIds.length === 6, JSON.stringify(out.blockIds));
+    check('chunkCount === 3',          out.chunkCount === 3, JSON.stringify(out));
+  }
+
+  console.log('\nTest 32: Item B — addMarkdownToDocChunked: rate-limit sleep between chunks (n-1 for n chunks)');
+  {
+    const md = 'A\n---\nB\n---\nC';
+    const sleepCalls = [];
+    const stub = async () => ({ add_content_to_doc_from_markdown: { success: true, block_ids: [], error: null } });
+    await addMarkdownToDocChunked('doc-1', md, {
+      gqlFn: stub,
+      sleep: async (ms) => { sleepCalls.push(ms); },
+      rateLimitMs: 150,
+      logger: silentLogger,
+    });
+    check('sleep called 2 times (n-1 for 3 chunks)', sleepCalls.length === 2, `sleepCalls=${sleepCalls.length}`);
+    check('each sleep is 150ms', sleepCalls.every(ms => ms === 150), JSON.stringify(sleepCalls));
+  }
+
+  console.log('\nTest 33: Item B — addMarkdownToDocChunked: per-chunk failure aborts; later chunks not fired');
+  {
+    const md = 'A\n---\nB\n---\nC\n---\nD\n---\nE';
+    const calls = [];
+    const stub = async (q, vars) => {
+      calls.push(vars.markdown);
+      if (calls.length === 3) throw new Error('Internal server error');
+      return { add_content_to_doc_from_markdown: { success: true, block_ids: [`b${calls.length}`], error: null } };
+    };
+    let threw = false;
+    let errMsg = '';
+    try {
+      await addMarkdownToDocChunked('doc-1', md, { gqlFn: stub, sleep: async () => {}, logger: silentLogger });
+    } catch (e) {
+      threw = true;
+      errMsg = e.message;
+    }
+    check('throws on chunk failure', threw === true, 'expected throw');
+    check('error message includes chunk index 3 / 5',
+      /chunk 3.*\/\s*5|chunk 3 of 5/i.test(errMsg),
+      errMsg);
+    check('chunks 4 + 5 not fired (calls stopped at 3)', calls.length === 3, `calls=${calls.length}`);
+  }
+
+  // ==========================================================================
+  // C4-followup Item C: integration smoke — buildCapacityViewDoc output IS
+  // chunked by chunkMarkdownAtDividers. Regression catch: if C3 ever emits
+  // a structure without `---` boundaries, this test fails.
+  // ==========================================================================
+
+  console.log('\nTest 34: Item C — integration smoke: buildCapacityViewDoc output produces multi-chunk via chunkMarkdownAtDividers');
+  {
+    const { buildCapacityViewDoc } = require('./capacity-view-generator.js');
+    const plan = { placements: [], capacityGrid: {}, finishingCycleReport: { rows: [] } };
+    const jobsById = { 'PL-A': { name: 'Test Job', delivery: '2026-06-12', status: 'Scheduled' } };
+    const markdown = buildCapacityViewDoc(plan, jobsById, [], { generatedAt: new Date('2026-06-03T12:00:00') });
+    const chunks = chunkMarkdownAtDividers(markdown);
+    // 8 week sections each ending with ---, plus header divider, plus legend
+    // → at minimum: 1 header + 8 weeks + 1 legend = 10 chunks
+    check('C3 output produces 8+ chunks',
+      chunks.length >= 8,
+      `chunks=${chunks.length}, first lines: ${chunks.slice(0, 3).map(c => c.split('\n')[0]).join(' | ')}`);
+    check('no chunk is empty', chunks.every(c => c.trim().length > 0), JSON.stringify(chunks.map(c => c.length)));
   }
 
   console.log();

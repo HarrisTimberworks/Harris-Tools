@@ -95,18 +95,34 @@ async function getDocIdByObjectId(objectId, { gqlFn = defaultGql } = {}) {
   return doc.id;
 }
 
-// Reads all block IDs in a doc, paginated. monday's `blocks(page, limit)`
-// param works on the docs query (verified via direct probe). Continues
-// until a page returns < batchSize blocks.
+// Reads all top-level block IDs in a doc, paginated. monday's
+// `blocks(page, limit)` param works on the docs query (verified via direct
+// probe). Continues until a page returns < batchSize blocks.
+//
+// C4-followup Item A — cascade-delete skip: monday's delete_doc_block
+// cascade-deletes children when a parent is deleted (table cells inside
+// table, layout cells inside layout, notice_box children, etc.). We
+// fetch parent_block_id alongside id and filter to top-level blocks
+// only — firing deletes against children that monday will cascade away
+// is wasted API calls (~485 such 404s during the 2026-05-25 first
+// regen out of 1027 blocks read).
+//
+// Pagination subtlety (load-bearing): the stop condition uses RAW
+// `blocks.length` (API page size), NOT the filtered top-level count.
+// If a page returns 100 blocks of which 80 are children, raw length
+// equals batchSize → we paginate. Using filtered length here would
+// stop pagination prematurely.
 async function getAllBlockIds(docId, { gqlFn = defaultGql, batchSize = READ_BATCH_SIZE } = {}) {
   const ids = [];
   let page = 1;
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const q = 'query ($docId: [ID!], $page: Int, $limit: Int) { docs(ids: $docId) { blocks(page: $page, limit: $limit) { id } } }';
+    const q = 'query ($docId: [ID!], $page: Int, $limit: Int) { docs(ids: $docId) { blocks(page: $page, limit: $limit) { id parent_block_id } } }';
     const r = await gqlFn(q, { docId: [String(docId)], page, limit: batchSize });
     const blocks = r?.docs?.[0]?.blocks || [];
-    for (const b of blocks) ids.push(b.id);
+    for (const b of blocks) {
+      if (!b.parent_block_id) ids.push(b.id);
+    }
     if (blocks.length < batchSize) break;
     page++;
   }
@@ -153,6 +169,11 @@ async function deleteBlocks(blockIds, opts = {}) {
 // monday's mutation handles markdown parsing internally (tables, bold,
 // italic, lists, dividers all preserved). Throws on success:false or any
 // gqlFn rejection.
+//
+// NOT used directly by replaceCapacityViewBody anymore (see Item B
+// below — full C3 output exceeds monday's undocumented per-call block-
+// count limit). Kept exported for tests + direct small-markdown
+// callers; the orchestrator uses addMarkdownToDocChunked.
 async function addMarkdownToDoc(docId, markdown, { gqlFn = defaultGql } = {}) {
   const q = 'mutation ($docId: ID!, $markdown: String!) { add_content_to_doc_from_markdown(docId: $docId, markdown: $markdown) { success block_ids error } }';
   const r = await gqlFn(q, { docId: String(docId), markdown });
@@ -161,6 +182,77 @@ async function addMarkdownToDoc(docId, markdown, { gqlFn = defaultGql } = {}) {
     throw new Error(`add_content_to_doc_from_markdown failed: ${result?.error || 'no result'}`);
   }
   return { blockIds: result.block_ids || [] };
+}
+
+// C4-followup Item B — chunked markdown insert.
+//
+// monday's add_content_to_doc_from_markdown has an undocumented
+// per-call block-count limit (somewhere around 500-600 blocks).
+// 2026-05-25 first live regen: full 8-week C3 output (9173 bytes,
+// ~720 blocks) returned INTERNAL_SERVER_ERROR from the docs-api
+// service. Manual recovery via splitting at `---` boundaries (10
+// chunks, 14-266 blocks each) succeeded on all sequential calls.
+//
+// chunkMarkdownAtDividers splits at lines matching the divider
+// pattern. The trailing divider STAYS with the preceding chunk so
+// monday renders it correctly as part of that chunk's block tree.
+// The final chunk has no trailing divider if the input didn't end
+// with one.
+//
+// Known limitation (Phase 5 polish): if a single section (heavy-load
+// week with many table cells, say 25+ placements) exceeds the per-
+// call block limit, that chunk still fails. Recursive sub-section
+// chunking is the fix — defer until a real-load week trips it.
+function chunkMarkdownAtDividers(markdown) {
+  if (!markdown) return [];
+  const lines = markdown.split('\n');
+  const chunks = [];
+  let cur = [];
+  for (const line of lines) {
+    cur.push(line);
+    if (line === '---') {
+      chunks.push(cur.join('\n'));
+      cur = [];
+    }
+  }
+  if (cur.length > 0) {
+    const tail = cur.join('\n');
+    if (tail.trim().length > 0) chunks.push(tail);
+  }
+  return chunks;
+}
+
+// Inserts markdown via repeated add_content_to_doc_from_markdown
+// calls, one per chunk (split at `---` divider boundaries). Sequential
+// with rate-limit between chunks (B6/deleteBlocks precedent). On
+// per-chunk failure, throws with chunk index + total; caller surfaces
+// the saved-markdown recovery artifact.
+async function addMarkdownToDocChunked(docId, markdown, opts = {}) {
+  const {
+    gqlFn = defaultGql,
+    sleep = defaultSleep,
+    rateLimitMs = RATE_LIMIT_MS,
+    logger = console,
+  } = opts;
+
+  const chunks = chunkMarkdownAtDividers(markdown);
+  const blockIds = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    try {
+      const r = await addMarkdownToDoc(docId, chunk, { gqlFn });
+      blockIds.push(...r.blockIds);
+      logger.log(`  Chunk ${i + 1}/${chunks.length} (${chunk.length} bytes) → ${r.blockIds.length} blocks (running total ${blockIds.length})`);
+    } catch (e) {
+      logger.log(`  ✗ Chunk ${i + 1}/${chunks.length} (${chunk.length} bytes) FAILED: ${e.message}`);
+      throw new Error(`addMarkdownToDocChunked: chunk ${i + 1} / ${chunks.length} failed: ${e.message}`);
+    }
+    if (i < chunks.length - 1 && rateLimitMs > 0) {
+      await sleep(rateLimitMs);
+    }
+  }
+  return { blockIds, chunkCount: chunks.length };
 }
 
 // Saves the C3-generated markdown to logs/capacity-view-<date>.md.
@@ -238,14 +330,20 @@ async function replaceCapacityViewBody(objectId, newMarkdown, opts = {}) {
   });
   _logger.log(`Deleted ${deleted}/${blockIds.length} blocks (${deleteErrors.length} errors).`);
 
-  _logger.log('Adding new markdown...');
+  _logger.log('Adding new markdown (chunked at `---` boundaries; see addMarkdownToDocChunked docstring)...');
   let blockIdsAdded = [];
+  let chunkCount = 0;
   try {
-    const r = await addMarkdownToDoc(docId, newMarkdown, { gqlFn: _gqlFn });
+    const r = await addMarkdownToDocChunked(docId, newMarkdown, {
+      gqlFn: _gqlFn,
+      sleep: _sleep,
+      logger: _logger,
+    });
     blockIdsAdded = r.blockIds;
-    _logger.log(`Added ${blockIdsAdded.length} blocks.`);
+    chunkCount = r.chunkCount;
+    _logger.log(`Added ${blockIdsAdded.length} blocks across ${chunkCount} chunk(s).`);
   } catch (e) {
-    _logger.log(`✗ add failed: ${e.message}`);
+    _logger.log(`✗ chunked add failed: ${e.message}`);
     _logger.log(`  FALLBACK: paste ${savedMarkdownPath} into ${CAPACITY_VIEW_DOC_URL} via monday UI, or invoke the capacity-view-refresh skill.`);
     throw e;
   }
@@ -273,6 +371,8 @@ module.exports = {
   getAllBlockIds,
   deleteBlocks,
   addMarkdownToDoc,
+  chunkMarkdownAtDividers,
+  addMarkdownToDocChunked,
   saveMarkdownToDisk,
   replaceCapacityViewBody,
 };
