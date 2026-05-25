@@ -88,6 +88,104 @@ function checkConsistency(row, baselinePlan) {
   return { valid: true, reason: null };
 }
 
+// B7-followup. Returns { valid: bool, reason: string|null }.
+// Reject station='Field' explicitly. B7 smoke matrix proved that Field
+// overrides land Status=Applied on the board but have no plan effect, because
+// "Field" is not in scripts/rebalance-schedule.js's STATION_ORDER and
+// scheduleStation never iterates Field for any job. The board exposes the
+// dropdown value; the planner has no execution path. Honest failure mode is
+// to surface a Conflict at validation time rather than let the row look
+// accepted while doing nothing.
+//
+// When (if ever) the planner gains a Field execution path (e.g. punchlist /
+// install routing in Phase 2 or 3), delete this check.
+function checkFieldUnsupported(row) {
+  if (row && row.station === 'Field') {
+    return {
+      valid: false,
+      reason: 'Field is unsupported in Phase 1 — no execution path for Field-stationed work in the planner (no entry in STATION_ORDER, scheduleStation never iterates it). Re-station the work or wait for Phase 2/3 to wire Field placement.',
+    };
+  }
+  return { valid: true, reason: null };
+}
+
+// B7-followup. Returns { valid: bool, reason: string|null }.
+// Reject a pinned (toWeek) that falls outside the job's computed station
+// window. B7 smoke matrix proved that out-of-window forces are silently
+// dropped — applyForceAssignments only fires inside scheduleStation's
+// window iteration (rebalance-schedule.js:1459) and the Pack & Ship +
+// Delivery loop (line 1749). For an outside-window pin, scheduleStation
+// never visits the (job × station × week) tuple, so the matched force
+// in activeForceAssignments is never consumed.
+//
+// Skip conditions:
+//   - Pure clear (no toCrew/toWeek): crewExclusions apply globally and are
+//     not gated by scheduleStation's iteration. No pin destination to check.
+//   - jobWindows undefined: backwards-compat with pre-B7-followup callers
+//     (validateAll's 5th arg is optional).
+//   - jobWindows[jobId] missing: the planner couldn't compute windows for
+//     this job (no delivery date, not active, etc.). Mirrors
+//     checkDeliveryDateConstraint's silent-pass on missing delivery.
+//
+// Reject conditions:
+//   - jobWindows[jobId] exists but station's window is missing (zero hours
+//     for that station on that job — computeWindows skips zero-hours
+//     stations). The planner will never iterate this station for this job,
+//     so any force here is silently dropped.
+//   - toWeek < window.start (pin before window opens).
+//   - toWeek > Monday-of(window.end) (pin after window's last week).
+//
+// Station → window-key mapping mirrors computeWindows()'s output:
+//   Engineering → eng
+//   Panel Processing → panel
+//   Benchwork → bench
+//   Pre Fin Cab Assembly → prefin
+//   Post Fin Cab Assembly → postfin
+//   Pack & Ship → packShip
+//   Delivery → packShip  (same single-week window as Pack & Ship)
+//   Field → not in the mapping (handled by checkFieldUnsupported)
+const STATION_TO_WINDOW_KEY = {
+  'Engineering': 'eng',
+  'Panel Processing': 'panel',
+  'Benchwork': 'bench',
+  'Pre Fin Cab Assembly': 'prefin',
+  'Post Fin Cab Assembly': 'postfin',
+  'Pack & Ship': 'packShip',
+  'Delivery': 'packShip',
+};
+
+function checkWindowMembership(row, jobWindows) {
+  if (jobWindows == null) return { valid: true, reason: null };
+  if (!row.toCrew || !row.toWeek) return { valid: true, reason: null };
+
+  const w = jobWindows[row.jobId];
+  if (!w) return { valid: true, reason: null };
+
+  const key = STATION_TO_WINDOW_KEY[row.station];
+  if (!key) return { valid: true, reason: null };  // unknown station — leave to other checks
+
+  const stationWindow = w[key];
+  if (!stationWindow) {
+    return {
+      valid: false,
+      reason: `job has no ${row.station} window (zero hours for this station) — planner won't iterate ${row.station} for this job, force would be silently dropped`,
+    };
+  }
+
+  const start = stationWindow.start;
+  // window.end is a Friday (Monday-of-last-week + 4 days). Snap to that
+  // week's Monday for the Monday-of-week comparison the planner pins on.
+  const lastMonday = toISO(getMondayOfWeek(parseISO(stationWindow.end)));
+
+  if (row.toWeek < start || row.toWeek > lastMonday) {
+    return {
+      valid: false,
+      reason: `pin week ${row.toWeek} is outside ${row.station} window ${start} → ${stationWindow.end} (last-week Monday ${lastMonday}); planner won't iterate this (job × station × week) tuple so force would be silently dropped`,
+    };
+  }
+  return { valid: true, reason: null };
+}
+
 // Returns { valid: bool, reason: string|null, softWarning?: string }.
 // Lenient with checkbox: a row whose To Crew × To Week would exceed the
 // week's cap is rejected by default and accepted (with softWarning) when
@@ -178,7 +276,7 @@ function resolveRow(rawRow, plJobs, crewParents) {
 //
 // Each conflict entry is the resolved-or-raw row plus { decision: 'conflict',
 // reason }. The reason combines all failing checks for that row.
-function validateAll(rawRows, baselinePlan, plJobs, crewParents) {
+function validateAll(rawRows, baselinePlan, plJobs, crewParents, jobWindows) {
   const accepted = [];
   const conflicts = [];
 
@@ -200,8 +298,14 @@ function validateAll(rawRows, baselinePlan, plJobs, crewParents) {
     const reasons = [];
     let softWarning = null;
 
+    const f = checkFieldUnsupported(row);
+    if (!f.valid) reasons.push(f.reason);
+
     const d = checkDeliveryDateConstraint(row, plJobs);
     if (!d.valid) reasons.push(d.reason);
+
+    const w = checkWindowMembership(row, jobWindows);
+    if (!w.valid) reasons.push(w.reason);
 
     const c = checkConsistency(row, baselinePlan);
     if (!c.valid) reasons.push(c.reason);
@@ -233,6 +337,8 @@ module.exports = {
   checkDeliveryDateConstraint,
   checkConsistency,
   checkCapacity,
+  checkFieldUnsupported,
+  checkWindowMembership,
   validateAll,
   // Exposed for run-planner.js to reuse the same resolution logic when
   // translating accepted rows into forceAssignments / crewExclusions.

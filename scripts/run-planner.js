@@ -59,6 +59,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   const _runExecute    = deps.runExecute    || reb.runExecute;
   const _validateAll   = deps.validateAll   || realValidateAll;
   const _writeRowDecisions = deps.writeRowDecisions || realWriteRowDecisions;
+  const _computeWindows = deps.computeWindows || reb.computeWindows;
   const _gqlFn         = deps.gqlFn         || reb.gql;
   const _findLatest    = deps.findLatestPlanFile || reb.findLatestPlanFile;
   const _fs            = deps.fs            || fs;
@@ -96,9 +97,27 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   console.log('\n--- Pass 1: baseline plan (no board overrides) ---');
   const baselinePlan = await _runPlan(baselineBoards);
 
+  // B7-followup: build jobWindows = { [jobId]: <computeWindows result> } so
+  // the validator's checkWindowMembership can reject out-of-window forces
+  // (which the planner silently drops). Per-job try/catch — a throw from
+  // assertFinishingCycleValid inside computeWindows must not abort the run;
+  // that job just doesn't get a window and the validator silent-passes its
+  // rows (matches the missing-delivery silent-pass policy).
+  const jobWindows = {};
+  for (const job of boards.jobs || []) {
+    try {
+      const w = _computeWindows(job);
+      if (w) jobWindows[job.id] = w;
+    } catch (e) {
+      // Silently skip — leave the job out of jobWindows. Logging would
+      // double-warn the operator (the same finishing-cycle issue surfaces
+      // again inside runPlan's own A3 reporting path).
+    }
+  }
+
   const pending = (boards.overrideRows || []).filter(r => r.status === 'Pending');
   console.log(`\n--- Validating ${pending.length} Pending override row(s) against baseline ---`);
-  const validation = _validateAll(pending, baselinePlan, boards.jobs, boards.crewParents);
+  const validation = _validateAll(pending, baselinePlan, boards.jobs, boards.crewParents, jobWindows);
 
   console.log('\n=== OVERRIDE VALIDATION ===');
   console.log(`Accepted: ${validation.accepted.length}`);

@@ -35,6 +35,8 @@ const {
   checkDeliveryDateConstraint,
   checkConsistency,
   checkCapacity,
+  checkFieldUnsupported,
+  checkWindowMembership,
   validateAll,
 } = require('./validate-overrides.js');
 
@@ -388,6 +390,271 @@ function syntheticBaselinePlan() {
     const out = validateAll(rows, syntheticBaselinePlan(), PL_JOBS, CREW_PARENTS);
     check('only 1 Pending → accepted has 1', out.accepted.length === 1 && out.accepted[0].rowId === '2004', JSON.stringify(out.accepted.map(a => a.rowId)));
     check('no conflicts for non-Pending rows', out.conflicts.length === 0, JSON.stringify(out.conflicts.map(c => c.rowId)));
+  }
+
+  // ==========================================================================
+  // checkFieldUnsupported (B7-followup)
+  // ==========================================================================
+  //
+  // B7 smoke matrix surfaced that Field-stationed overrides are silently
+  // dropped by the planner — "Field" is not in scripts/rebalance-schedule.js's
+  // STATION_ORDER (lines 132–138), so scheduleStation never iterates Field
+  // for any job. applyForceAssignments is never called for the (job × Field
+  // × week) tuple. The board's dropdown exposes Field; the planner has no
+  // execution path.
+  //
+  // Validator behavior: reject station='Field' explicitly at validation time
+  // so the operator gets a Conflict with a clear reason instead of an
+  // Applied row with no plan effect.
+
+  console.log('\nTest 22: checkFieldUnsupported — Field station rejected with explanatory reason');
+  {
+    const r = resolvedRow({ station: 'Field', toCrew: 'Jonathan', toWeek: '2026-06-08' });
+    const out = checkFieldUnsupported(r);
+    check('invalid', out.valid === false, JSON.stringify(out));
+    check('reason mentions Field', /field/i.test(out.reason || ''), out.reason || '(no reason)');
+    check('reason mentions no execution path / unsupported / Phase 1',
+      /unsupported|execution path|phase 1|no.*path|not.*implement/i.test(out.reason || ''),
+      out.reason || '(no reason)');
+  }
+
+  console.log('\nTest 23: checkFieldUnsupported — non-Field stations pass');
+  {
+    for (const station of ['Engineering', 'Panel Processing', 'Benchwork', 'Pre Fin Cab Assembly',
+                           'Post Fin Cab Assembly', 'Pack & Ship', 'Delivery']) {
+      const r = resolvedRow({ station });
+      const out = checkFieldUnsupported(r);
+      check(`valid for ${station}`, out.valid === true, JSON.stringify(out));
+      check(`reason null for ${station}`, out.reason === null, JSON.stringify(out));
+    }
+  }
+
+  console.log('\nTest 24: checkFieldUnsupported — Field rejected even on pure clear (no execution path either direction)');
+  {
+    const r = resolvedRow({
+      station: 'Field',
+      fromCrew: 'Jonathan', fromWeek: '2026-06-08',
+      toCrew: null, toWeek: null,
+    });
+    const out = checkFieldUnsupported(r);
+    check('invalid', out.valid === false, JSON.stringify(out));
+  }
+
+  // ==========================================================================
+  // checkWindowMembership (B7-followup)
+  // ==========================================================================
+  //
+  // B7 smoke matrix surfaced that forceAssignments whose (job × station × week)
+  // tuple falls outside the job's computeWindows() result are silently dropped.
+  // applyForceAssignments only fires inside scheduleStation's window iteration
+  // (rebalance-schedule.js:1459) and the Pack & Ship + Delivery loop (line
+  // 1749). For an out-of-window pin, scheduleStation never visits the tuple
+  // and the matched force just sits in activeForceAssignments unused.
+  //
+  // Validator behavior: reject any row whose pinned (toWeek) falls outside
+  // the job's computed station window for that station, with a clear reason
+  // citing the window bounds.
+
+  // Station name → window-key mapping mirrors computeWindows()'s output keys
+  // (Engineering→eng, Panel Processing→panel, Benchwork→bench,
+  // Pre Fin Cab Assembly→prefin, Post Fin Cab Assembly→postfin,
+  // Pack & Ship→packShip, Delivery→packShip).
+  function makeWindows() {
+    return {
+      'PL-A': {
+        bench:    { start: '2026-05-18', end: '2026-05-29' },  // 5-18 Mon through 5-29 Fri (2 weeks)
+        prefin:   { start: '2026-05-25', end: '2026-05-29' },
+        postfin:  { start: '2026-06-08', end: '2026-06-12' },
+        packShip: { start: '2026-06-08', end: '2026-06-12' },
+      },
+      'PL-B': {
+        // PL-B has no bench (zero hours station)
+        prefin:   { start: '2026-05-18', end: '2026-05-22' },
+        packShip: { start: '2026-05-25', end: '2026-05-29' },
+      },
+      // PL-C deliberately missing — silent-pass case
+    };
+  }
+
+  console.log('\nTest 25: checkWindowMembership — toWeek inside window → valid');
+  {
+    const r = resolvedRow({
+      jobId: 'PL-A', station: 'Benchwork',
+      toCrew: 'Ian', toWeek: '2026-05-25',  // inside bench 5-18 → 5-29
+    });
+    const out = checkWindowMembership(r, makeWindows());
+    check('valid', out.valid === true, JSON.stringify(out));
+    check('reason null', out.reason === null, JSON.stringify(out));
+  }
+
+  console.log('\nTest 26: checkWindowMembership — toWeek before window.start → invalid');
+  {
+    const r = resolvedRow({
+      jobId: 'PL-A', station: 'Pre Fin Cab Assembly',
+      toCrew: 'Spencer', toWeek: '2026-05-11',  // before prefin 5-25
+    });
+    const out = checkWindowMembership(r, makeWindows());
+    check('invalid', out.valid === false, JSON.stringify(out));
+    check('reason mentions window / outside / station',
+      /window|outside|station|pre.?fin/i.test(out.reason || ''),
+      out.reason || '(no reason)');
+    check('reason cites window dates', /2026-05-25|2026-05-29/.test(out.reason || ''),
+      out.reason || '(no reason)');
+  }
+
+  console.log('\nTest 27: checkWindowMembership — toWeek after Monday-of(window.end) → invalid');
+  {
+    const r = resolvedRow({
+      jobId: 'PL-A', station: 'Pre Fin Cab Assembly',
+      toCrew: 'Spencer', toWeek: '2026-06-01',  // after prefin (end 5-29 Friday, last Monday 5-25)
+    });
+    const out = checkWindowMembership(r, makeWindows());
+    check('invalid', out.valid === false, JSON.stringify(out));
+  }
+
+  console.log('\nTest 28: checkWindowMembership — toWeek === window.start (boundary) → valid');
+  {
+    const r = resolvedRow({
+      jobId: 'PL-A', station: 'Benchwork',
+      toCrew: 'Ian', toWeek: '2026-05-18',  // === bench.start
+    });
+    const out = checkWindowMembership(r, makeWindows());
+    check('valid', out.valid === true, JSON.stringify(out));
+  }
+
+  console.log('\nTest 29: checkWindowMembership — toWeek === Monday-of(window.end) (last week) → valid');
+  {
+    const r = resolvedRow({
+      jobId: 'PL-A', station: 'Benchwork',
+      toCrew: 'Ian', toWeek: '2026-05-25',  // bench.end 5-29 → Monday-of-end 5-25
+    });
+    const out = checkWindowMembership(r, makeWindows());
+    check('valid (last-week-of-window boundary)', out.valid === true, JSON.stringify(out));
+  }
+
+  console.log('\nTest 30: checkWindowMembership — Pack & Ship maps to packShip key');
+  {
+    const r = resolvedRow({
+      jobId: 'PL-A', station: 'Pack & Ship',
+      toCrew: 'Paisios', toWeek: '2026-06-08',  // packShip 6-08 → 6-12, monday-of-end is 6-08
+    });
+    const out = checkWindowMembership(r, makeWindows());
+    check('valid', out.valid === true, JSON.stringify(out));
+  }
+
+  console.log('\nTest 31: checkWindowMembership — Delivery maps to packShip key (same window as Pack & Ship)');
+  {
+    const r = resolvedRow({
+      jobId: 'PL-A', station: 'Delivery',
+      toCrew: 'Paisios', toWeek: '2026-06-08',
+    });
+    const out = checkWindowMembership(r, makeWindows());
+    check('valid', out.valid === true, JSON.stringify(out));
+  }
+
+  console.log('\nTest 32: checkWindowMembership — pure clear (no toCrew) skips');
+  {
+    const r = resolvedRow({
+      jobId: 'PL-A', station: 'Benchwork',
+      fromCrew: 'Ian', fromWeek: '2026-05-18',
+      toCrew: null, toWeek: null,
+    });
+    const out = checkWindowMembership(r, makeWindows());
+    check('valid (skip — pure clear has no pin destination)', out.valid === true, JSON.stringify(out));
+    check('reason null', out.reason === null, JSON.stringify(out));
+  }
+
+  console.log('\nTest 33: checkWindowMembership — jobWindows missing entry for this jobId → silent pass');
+  {
+    // PL-C is not in the window map — the planner couldn't compute (no delivery,
+    // not active, etc.). We can't reject what we can't compare against, mirroring
+    // the delivery-date check's behavior on missing-delivery jobs.
+    const r = resolvedRow({
+      jobId: 'PL-C', station: 'Benchwork',
+      toCrew: 'Ian', toWeek: '2026-05-25',
+    });
+    const out = checkWindowMembership(r, makeWindows());
+    check('valid (silent pass on missing jobWindows entry)', out.valid === true, JSON.stringify(out));
+  }
+
+  console.log('\nTest 34: checkWindowMembership — job exists in windows but station has no window (zero hours) → invalid');
+  {
+    // PL-B has no bench window (the job has zero bench hours, so computeWindows
+    // didn't emit one). An override trying to force bench work on this job
+    // would be silently dropped by the planner because scheduleStation never
+    // iterates bench for it.
+    const r = resolvedRow({
+      jobId: 'PL-B', station: 'Benchwork',
+      toCrew: 'Ian', toWeek: '2026-05-25',
+    });
+    const out = checkWindowMembership(r, makeWindows());
+    check('invalid', out.valid === false, JSON.stringify(out));
+    check('reason mentions no window / zero hours / station has no work',
+      /no.*window|zero|no.*hours|no.*work|not scheduled/i.test(out.reason || ''),
+      out.reason || '(no reason)');
+  }
+
+  console.log('\nTest 35: checkWindowMembership — jobWindows undefined entirely → silent pass (backwards-compat)');
+  {
+    // Pre-B7-followup callers don't pass jobWindows. The check should silently
+    // pass in that case so the old behavior is preserved.
+    const r = resolvedRow({
+      jobId: 'PL-A', station: 'Pre Fin Cab Assembly',
+      toCrew: 'Spencer', toWeek: '2026-12-31',  // way outside any sane window
+    });
+    const out = checkWindowMembership(r, undefined);
+    check('valid (silent pass when jobWindows is undefined)', out.valid === true, JSON.stringify(out));
+  }
+
+  // ==========================================================================
+  // validateAll integration with the two new checks (B7-followup)
+  // ==========================================================================
+
+  console.log('\nTest 36: validateAll — Field row routed to conflicts via checkFieldUnsupported');
+  {
+    const rows = [
+      rawRow({ rowId: '3601', jobMpmId: 'MPM-A', station: 'Field',
+               toCrewParentId: 'CP-JON-0608', toWeek: '2026-06-08', hours: 4 }),
+    ];
+    const jobWindowsByJobId = { 'PL-A': makeWindows()['PL-A'] };
+    const out = validateAll(rows, syntheticBaselinePlan(), PL_JOBS, CREW_PARENTS, jobWindowsByJobId);
+    check('Field row in conflicts', out.conflicts.length === 1 && out.conflicts[0].rowId === '3601',
+      JSON.stringify(out.conflicts.map(c => c.rowId)));
+    check('reason mentions Field', /field/i.test(out.conflicts[0]?.reason || ''),
+      out.conflicts[0]?.reason || '(no reason)');
+  }
+
+  console.log('\nTest 37: validateAll — out-of-window force-row routed to conflicts via checkWindowMembership');
+  {
+    const rows = [
+      rawRow({ rowId: '3701', jobMpmId: 'MPM-A', station: 'Pre Fin Cab Assembly',
+               toCrewParentId: 'CP-SPN-0518', toWeek: '2026-05-18',  // before prefin 5-25
+               hours: 4 }),
+    ];
+    const jobWindowsByJobId = { 'PL-A': makeWindows()['PL-A'] };
+    const out = validateAll(rows, syntheticBaselinePlan(), PL_JOBS, CREW_PARENTS, jobWindowsByJobId);
+    check('out-of-window row in conflicts', out.conflicts.length === 1 && out.conflicts[0].rowId === '3701',
+      JSON.stringify(out.conflicts.map(c => c.rowId)));
+    check('reason cites window', /window|outside/i.test(out.conflicts[0]?.reason || ''),
+      out.conflicts[0]?.reason || '(no reason)');
+  }
+
+  console.log('\nTest 38: validateAll — backwards-compat: omitted jobWindows arg does NOT cause new rejections');
+  {
+    // Pre-B7-followup signature: validateAll(rows, plan, jobs, parents) — no 5th arg.
+    // A row that would be rejected by checkWindowMembership if windows were present
+    // should still pass when windows are omitted. Use Jonathan/6-08 (capacity
+    // 0/40, room for plenty) and Job A (delivery 6-12 → delivery-week 6-08
+    // matches toWeek 6-08 exactly, passes delivery-date check).
+    const rows = [
+      rawRow({ rowId: '3801', jobMpmId: 'MPM-A', station: 'Pre Fin Cab Assembly',
+               toCrewParentId: 'CP-JON-0608', toWeek: '2026-06-08', hours: 4 }),
+    ];
+    const out = validateAll(rows, syntheticBaselinePlan(), PL_JOBS, CREW_PARENTS);
+    // Should still be accepted (other checks pass; window check silent-passes when undefined).
+    check('row still accepted (no jobWindows = no window check)',
+      out.accepted.length === 1 && out.accepted[0].rowId === '3801',
+      JSON.stringify({ accepted: out.accepted.map(a => a.rowId), conflicts: out.conflicts.map(c => c.rowId) }));
   }
 
   console.log('\nTest 21: validateAll — unresolved jobMpmId or crewParentId surfaces as conflict (not crash)');

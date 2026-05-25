@@ -364,6 +364,130 @@ function makeFakeBoards() {
     check('opts.dryRun === true under DRY_RUN=1', received?.dryRun === true, `dryRun=${received?.dryRun}`);
   }
 
+  console.log('\nTest 9: --plan mode — computeWindows called per job, jobWindows passed as 5th arg to validateAll (B7-followup)');
+  {
+    // Boards with two jobs so we can verify computeWindows fires once per job
+    // and the result is keyed by jobId in the map handed to validateAll.
+    const boards = {
+      jobs: [
+        { id: 'PL-A', masterPmId: 'MPM-A', name: 'Job A', delivery: '2026-06-12', status: 'Not Started',
+          hours: { eng: 4, panel: 8, bench: 16, prefin: 8, postfin: 8 } },
+        { id: 'PL-B', masterPmId: 'MPM-B', name: 'Job B', delivery: '2026-05-29', status: 'Not Started',
+          hours: { eng: 0, panel: 4, bench: 0, prefin: 4, postfin: 4 } },
+        // Job C deliberately has no delivery — computeWindows returns null, must not crash
+        { id: 'PL-C', masterPmId: 'MPM-C', name: 'Job C', delivery: null, status: 'Not Started',
+          hours: { eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 } },
+      ],
+      crewParents: [
+        { parentId: 'CP-IAN-0525', crew: 'Ian', week: '2026-05-25', base: 40, timeOff: 0, nonProd: 0 },
+      ],
+      timeOff: [],
+      existingSubs: [],
+      overrideRows: [],
+    };
+
+    const cwCalls = [];
+    const stubComputeWindows = (job) => {
+      cwCalls.push(job.id);
+      if (!job.delivery) return null;
+      return { bench: { start: '2026-05-18', end: '2026-05-29' }, packShip: { start: '2026-06-08', end: '2026-06-12' } };
+    };
+
+    let validateArgs = null;
+    const stubValidateAll = (rows, baseline, plJobs, crewParents, jobWindows) => {
+      validateArgs = { rows, baseline, plJobs, crewParents, jobWindows };
+      return { accepted: [], conflicts: [] };
+    };
+
+    const stubLoadAll          = async () => boards;
+    let pass = 0;
+    const stubRunPlan          = async () => (++pass, { mode: 'plan', placements: [], capacityGrid: {}, warnings: [] });
+    const stubWriteRowDecisions = async () => ({ written: 0, skipped: 0, errors: [] });
+
+    const fakeFs = makeFakeFs();
+    const realLog = console.log; console.log = () => {};
+    try {
+      await runPlanner({
+        mode: 'plan',
+        deps: {
+          loadAll: stubLoadAll, runPlan: stubRunPlan, validateAll: stubValidateAll,
+          writeRowDecisions: stubWriteRowDecisions,
+          computeWindows: stubComputeWindows,
+          fs: fakeFs.fs, logsDir: '/fake/logs', now: () => new Date('2026-05-22T20:00:00Z'),
+        },
+      });
+    } finally { console.log = realLog; }
+
+    check('computeWindows called once per job (3 jobs in boards)',
+      cwCalls.length === 3, JSON.stringify(cwCalls));
+    check('computeWindows saw each job id', cwCalls.includes('PL-A') && cwCalls.includes('PL-B') && cwCalls.includes('PL-C'),
+      JSON.stringify(cwCalls));
+
+    check('validateAll received jobWindows as 5th arg', validateArgs?.jobWindows != null,
+      `jobWindows=${typeof validateArgs?.jobWindows}`);
+    check('jobWindows has PL-A entry', validateArgs?.jobWindows?.['PL-A']?.bench?.start === '2026-05-18',
+      JSON.stringify(validateArgs?.jobWindows));
+    check('jobWindows has PL-B entry', validateArgs?.jobWindows?.['PL-B']?.bench?.start === '2026-05-18',
+      JSON.stringify(validateArgs?.jobWindows));
+    check('jobWindows omits PL-C (no delivery → computeWindows returned null)',
+      !('PL-C' in (validateArgs?.jobWindows || {})),
+      JSON.stringify(Object.keys(validateArgs?.jobWindows || {})));
+  }
+
+  console.log('\nTest 10: --plan mode — computeWindows throw is caught per-job (does not abort the run)');
+  {
+    // assertFinishingCycleValid inside the real computeWindows can throw. A
+    // throw must not abort the planner — that job just doesn't get a window
+    // and the validator falls back to silent-pass for that job's rows.
+    const boards = {
+      jobs: [
+        { id: 'PL-GOOD', masterPmId: 'MPM-GOOD', name: 'Good Job', delivery: '2026-06-12', status: 'Not Started',
+          hours: {} },
+        { id: 'PL-BAD', masterPmId: 'MPM-BAD', name: 'Bad Job', delivery: '2026-06-12', status: 'Not Started',
+          hours: {} },
+      ],
+      crewParents: [], timeOff: [], existingSubs: [], overrideRows: [],
+    };
+    const stubComputeWindows = (job) => {
+      if (job.id === 'PL-BAD') throw new Error('synthetic computeWindows error');
+      return { bench: { start: '2026-05-18', end: '2026-05-29' } };
+    };
+    let validateArgs = null;
+    const stubValidateAll = (rows, baseline, plJobs, crewParents, jobWindows) => {
+      validateArgs = { jobWindows };
+      return { accepted: [], conflicts: [] };
+    };
+    const stubLoadAll = async () => boards;
+    let pass = 0;
+    const stubRunPlan = async () => (++pass, { mode: 'plan', placements: [], capacityGrid: {}, warnings: [] });
+    const stubWriteRowDecisions = async () => ({ written: 0, skipped: 0, errors: [] });
+
+    const fakeFs = makeFakeFs();
+    const realLog = console.log; console.log = () => {};
+    let ok = false;
+    try {
+      await runPlanner({
+        mode: 'plan',
+        deps: {
+          loadAll: stubLoadAll, runPlan: stubRunPlan, validateAll: stubValidateAll,
+          writeRowDecisions: stubWriteRowDecisions,
+          computeWindows: stubComputeWindows,
+          fs: fakeFs.fs, logsDir: '/fake/logs', now: () => new Date('2026-05-22T20:00:00Z'),
+        },
+      });
+      ok = true;
+    } catch (e) {
+      ok = false;
+    } finally { console.log = realLog; }
+
+    check('runPlanner did NOT throw on per-job computeWindows error', ok === true, 'threw');
+    check('PL-GOOD has a window entry', validateArgs?.jobWindows?.['PL-GOOD']?.bench != null,
+      JSON.stringify(validateArgs?.jobWindows));
+    check('PL-BAD silently omitted from jobWindows (does not abort)',
+      !('PL-BAD' in (validateArgs?.jobWindows || {})),
+      JSON.stringify(Object.keys(validateArgs?.jobWindows || {})));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);
