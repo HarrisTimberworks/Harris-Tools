@@ -1104,6 +1104,54 @@ With B7-followup landed and the live re-run confirming, Phase 1 satisfies the sp
 
 ---
 
+## Phase 1.1 — Applied-row persistence fix
+
+Spec-compliance gap surfaced in a side-chat review of the Phase 1 lifecycle: rows that flip to Applied on Day 1 weren't re-translating to forceAssignments on Day 2's `--plan` run, so the deployed override silently lost its effect at the next `--execute`. Spec Section B Step 3 reads "Translate each Applied row into an internal forceAssignment"; the Phase 1 code only translated Pending. Stage 1 of the fix closes this gap by extending the validation + translation filter to accept Pending **and** Applied.
+
+### Row lifecycle (post Phase 1.1)
+
+| Status | Behavior on `--plan` |
+|---|---|
+| Pending | Re-validate this run. May transition to Applied or Conflict. |
+| Applied | Re-validate this run; carry forward if still valid. May transition to Conflict if baseline shifted. |
+| Conflict | No re-validation. Operator must manually flip Status to Pending in monday UI to retry. |
+| Cleared | No re-validation. Terminal state — auto-stale automation moves the row to the Stale group when its week passes. |
+
+### Code changes (Stage 1)
+
+- **`scripts/validate-overrides.js`** — `validateAll`'s filter changes from `if (raw.status !== 'Pending') continue;` to `if (raw.status !== 'Pending' && raw.status !== 'Applied') continue;`. Docstring rewritten to document re-validation semantics: an Applied row may flip to Conflict if conditions changed (delivery push, capacity shrink, etc.).
+- **`scripts/rebalance-schedule.js`** — `translateOverrideRows`'s filter matches. Docstring rewritten to capture the spec-compliance gap and the idempotency contract (Applied row translates same as Pending; the row's data hasn't changed, only its Status).
+- **`scripts/run-planner.js`** — upstream pre-validation filter changes from Pending-only to Pending+Applied (the variable renames from `pending` to `toValidate`; console log adjusted accordingly).
+- **`scripts/writeback-overrides.js`** — no code change. The existing accepted→Applied / conflict→Conflict mutation path naturally handles the new system-level transitions (Applied→Applied = idempotent value-wise, Last Run advances; Applied→Conflict = Status flips, Conflict Reason populates, Last Run advances).
+
+### TDD coverage
+
+- `test-validate-overrides.js`: 4 new tests (39–42). Applied re-validates as accepted; Applied flips to Conflict when delivery moved past pin; softWarning preserved on Applied over-cap with Allow Over-Cap; Conflict + Cleared still skip silently. Pre-existing Test 20 updated to reflect the new lifecycle (Applied now in accepted alongside Pending).
+- `test-overrides-read-pipeline.js`: Test 7 narrowed to assert only Conflict + Cleared skip. New Test 7b asserts Applied translates correctly across all three shape branches (pure assign, move, pure clear) with source-row IDs preserved.
+- `test-writeback-overrides.js`: 3 new tests (13–15). Document the system-level Applied→Applied / Applied→Conflict contracts against the existing buildWritebackMutations behavior, plus a back-to-back-runs idempotency check (Status + Conflict Reason identical; Last Run advances day-by-day).
+- `test-run-planner-orchestrator.js`: 1 new test (Test 11). Day-2 simulation — boards carry a single Applied row, stubs intercept the pipeline, assert validateAll receives it, writeback fires the accepted decision, Pass 2's runPlan call sees `overrideRows.length === 1`.
+
+Full sweep: 14 files green, 522+ checks total, no regressions.
+
+### Live verification — scheduled
+
+After the Stage 1 commit lands, the live re-run of the existing 9-row Phase 1 smoke matrix confirms the persistence behavior end-to-end:
+
+1. Flip all 9 rows back to Pending (operator or board-API).
+2. Run `--plan` once — expected 1 Applied + 8 Conflict matching the B7-followup simulation.
+3. Run `--plan` again with no board edits — expected re-validation of the 1 Applied row (Last Run re-stamps), the 8 Conflict rows skipped, Pass 2's accepted-rows set still containing the Applied row's forceAssignment, console tally identical to run 1.
+
+Result captured in chat record, not amended into the commit (per the established "always create new commits" discipline).
+
+### Stage 2 — deferred to C5 scope
+
+These were considered as part of the Phase 1.1 fix but split out to keep Stage 1 minimal:
+
+1. **Column-edit detection on Applied rows.** If an operator edits Hours or Reason on an Applied row, should it auto-flip back to Pending so the new value re-validates? Likely requires monday native automation (Change → Pending) rather than a code change. Defer until C5 surfaces the question concretely with operator behavior in front of us.
+2. **🔧 indicator stable-vs-stale interaction with re-validated rows.** When an Applied row re-validates as Applied on Day N, the 🔧 cells it drives should look identical to Day 1; when it flips to Conflict on Day N, the 🔧 should disappear from those cells. C5 needs to reconcile the indicator-set against the current validation result, not a Day-1 snapshot. Defer to C5 implementation.
+
+---
+
 ## Section F — Out of scope for Phase 1
 
 Do NOT attempt these in Phase 1 — they belong to later phases:

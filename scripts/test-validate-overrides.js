@@ -375,8 +375,11 @@ function syntheticBaselinePlan() {
     check('conflicts is []', Array.isArray(out.conflicts) && out.conflicts.length === 0, JSON.stringify(out));
   }
 
-  console.log('\nTest 20: validateAll — non-Pending rows are ignored (not in accepted, not in conflicts)');
+  console.log('\nTest 20: validateAll — Conflict and Cleared rows skipped; Pending + Applied processed (Phase 1.1 lifecycle)');
   {
+    // Phase 1.1: Applied joins Pending as a validated status. Conflict +
+    // Cleared still skip — Conflict requires an operator's manual flip back
+    // to Pending; Cleared is terminal.
     const rows = [
       rawRow({ rowId: '2001', status: 'Applied',  jobMpmId: 'MPM-A',
                toCrewParentId: 'CP-IAN-0525', toWeek: '2026-05-25', hours: 8 }),
@@ -388,8 +391,13 @@ function syntheticBaselinePlan() {
                toCrewParentId: 'CP-IAN-0525', toWeek: '2026-05-25', hours: 8 }),
     ];
     const out = validateAll(rows, syntheticBaselinePlan(), PL_JOBS, CREW_PARENTS);
-    check('only 1 Pending → accepted has 1', out.accepted.length === 1 && out.accepted[0].rowId === '2004', JSON.stringify(out.accepted.map(a => a.rowId)));
-    check('no conflicts for non-Pending rows', out.conflicts.length === 0, JSON.stringify(out.conflicts.map(c => c.rowId)));
+    const acceptedIds = out.accepted.map(a => a.rowId).sort();
+    check('accepted has [Applied 2001, Pending 2004] — Conflict + Cleared filtered out',
+      JSON.stringify(acceptedIds) === JSON.stringify(['2001', '2004']),
+      JSON.stringify(acceptedIds));
+    check('no conflicts (Conflict + Cleared skip silently, not re-flag)',
+      out.conflicts.length === 0,
+      JSON.stringify(out.conflicts.map(c => c.rowId)));
   }
 
   // ==========================================================================
@@ -655,6 +663,99 @@ function syntheticBaselinePlan() {
     check('row still accepted (no jobWindows = no window check)',
       out.accepted.length === 1 && out.accepted[0].rowId === '3801',
       JSON.stringify({ accepted: out.accepted.map(a => a.rowId), conflicts: out.conflicts.map(c => c.rowId) }));
+  }
+
+  // ==========================================================================
+  // Phase 1.1 — Applied-row persistence (validateAll input filter)
+  // ==========================================================================
+  //
+  // Spec Section B Step 3: "Translate each Applied row into an internal
+  // forceAssignment". Pre-1.1, validateAll dropped non-Pending rows silently,
+  // so an Applied row from Day 1 lost its effect on Day 2's --plan run. The
+  // 1.1 fix accepts Pending AND Applied rows into the validation pass. Applied
+  // rows re-validate against the current baseline / delivery dates / capacity
+  // — if conditions changed since the prior run (delivery push, capacity
+  // shrink), an Applied row may now fail and flip to Conflict. Conflict +
+  // Cleared rows still don't re-validate (operator must manually flip
+  // Conflict → Pending to retry).
+
+  console.log('\nTest 39: validateAll — Applied row re-validates as still valid → accepted');
+  {
+    // Same shape as a successful Pending row, but status='Applied'. Pre-1.1
+    // this row would have been silently dropped (not in accepted, not in
+    // conflicts). Post-1.1 it's re-processed and returns in accepted.
+    const rows = [
+      rawRow({ rowId: '3901', status: 'Applied', jobMpmId: 'MPM-A',
+               toCrewParentId: 'CP-IAN-0525', toWeek: '2026-05-25', hours: 8 }),
+    ];
+    const out = validateAll(rows, syntheticBaselinePlan(), PL_JOBS, CREW_PARENTS);
+    check('Applied row reaches validation and gets accepted',
+      out.accepted.length === 1 && out.accepted[0].rowId === '3901',
+      JSON.stringify({ accepted: out.accepted.map(a => a.rowId), conflicts: out.conflicts.map(c => c.rowId) }));
+    check('conflicts empty', out.conflicts.length === 0, JSON.stringify(out.conflicts));
+  }
+
+  console.log('\nTest 40: validateAll — Applied row re-validates as Conflict when baseline changed (delivery moved past pin)');
+  {
+    // Day 1: row pinned Spencer/5-25, delivery 5-29 (Friday, deliveryWeek 5-25).
+    // Status flipped to Applied on Day 1.
+    // Day 2: someone pushed Job B's delivery date — now 5-22 (a week earlier).
+    //         deliveryWeek is now 5-18; the existing pin at 5-25 is past it.
+    // Expected: re-validates as Conflict.
+    const rows = [
+      rawRow({ rowId: '4001', status: 'Applied', jobMpmId: 'MPM-B',
+               toCrewParentId: 'CP-SPN-0525', toWeek: '2026-05-25', hours: 5 }),
+    ];
+    const movedJobs = PL_JOBS.map(j => j.masterPmId === 'MPM-B'
+      ? { ...j, delivery: '2026-05-22' }
+      : j);
+    const out = validateAll(rows, syntheticBaselinePlan(), movedJobs, CREW_PARENTS);
+    check('Applied row flips to conflicts when baseline moved',
+      out.conflicts.length === 1 && out.conflicts[0].rowId === '4001',
+      JSON.stringify({ accepted: out.accepted.map(a => a.rowId), conflicts: out.conflicts.map(c => c.rowId) }));
+    check('reason cites delivery date',
+      /deliver/i.test(out.conflicts[0]?.reason || ''),
+      out.conflicts[0]?.reason || '(no reason)');
+  }
+
+  console.log('\nTest 41: validateAll — Applied row preserves softWarning (e.g. capacity over-cap with Allow Over-Cap checked)');
+  {
+    // Day 1 row was Applied with the Allow Over-Cap checkbox; Day 2 same
+    // shape re-validates as accepted with the same softWarning.
+    const rows = [
+      rawRow({ rowId: '4101', status: 'Applied', jobMpmId: 'MPM-A',
+               toCrewParentId: 'CP-SPN-0525', toWeek: '2026-05-25',
+               hours: 10, allowOverCap: true }),
+    ];
+    const out = validateAll(rows, syntheticBaselinePlan(), PL_JOBS, CREW_PARENTS);
+    check('still accepted on re-validation',
+      out.accepted.length === 1 && out.accepted[0].rowId === '4101',
+      JSON.stringify(out));
+    check('softWarning preserved',
+      typeof out.accepted[0]?.softWarning === 'string' && /over|cap/i.test(out.accepted[0].softWarning),
+      out.accepted[0]?.softWarning || '(no softWarning)');
+  }
+
+  console.log('\nTest 42: validateAll — Conflict and Cleared rows still skipped (no re-validation)');
+  {
+    // Conflict rows: operator must manually flip back to Pending to retry.
+    // Cleared rows: terminal state for the row. Neither reaches validation.
+    const rows = [
+      rawRow({ rowId: '4201', status: 'Conflict', jobMpmId: 'MPM-A',
+               toCrewParentId: 'CP-IAN-0525', toWeek: '2026-05-25', hours: 8 }),
+      rawRow({ rowId: '4202', status: 'Cleared', jobMpmId: 'MPM-A',
+               toCrewParentId: 'CP-IAN-0525', toWeek: '2026-05-25', hours: 8 }),
+      // Sanity-check Pending in the same batch still works.
+      rawRow({ rowId: '4203', status: 'Pending', jobMpmId: 'MPM-A',
+               toCrewParentId: 'CP-IAN-0525', toWeek: '2026-05-25', hours: 8 }),
+    ];
+    const out = validateAll(rows, syntheticBaselinePlan(), PL_JOBS, CREW_PARENTS);
+    check('only Pending in accepted (Conflict + Cleared dropped before validation)',
+      out.accepted.length === 1 && out.accepted[0].rowId === '4203',
+      JSON.stringify({ accepted: out.accepted.map(a => a.rowId), conflicts: out.conflicts.map(c => c.rowId) }));
+    check('conflicts empty (skipped, not flagged)',
+      out.conflicts.length === 0,
+      JSON.stringify(out.conflicts.map(c => c.rowId)));
   }
 
   console.log('\nTest 21: validateAll — unresolved jobMpmId or crewParentId surfaces as conflict (not crash)');

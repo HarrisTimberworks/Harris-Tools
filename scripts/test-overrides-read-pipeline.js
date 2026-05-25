@@ -241,19 +241,63 @@ function normRow(overrides = {}) {
     check('untranslatable reason mentions crew/parent', /crew|parent/i.test(out.untranslatable[0]?.reason || ''), out.untranslatable[0]?.reason);
   }
 
-  console.log('\nTest 7: translateOverrideRows — non-Pending status skipped silently');
+  console.log('\nTest 7: translateOverrideRows — Conflict and Cleared status skipped silently (post Phase 1.1)');
+  // Phase 1.1: Applied no longer skipped; only Conflict + Cleared skip. This
+  // closes the Day-2 persistence gap (spec Section B Step 3: "Translate each
+  // Applied row into an internal forceAssignment"). See Test 7b below for
+  // Applied translation coverage.
   if (typeof translateOverrideRows !== 'function') {
     console.log('  (skipping — translateOverrideRows not exported)');
   } else {
     const rows = [
-      normRow({ rowId: '701', status: 'Applied',  jobMpmId: 'MPM-1', toCrewParentId: 'CP-IAN-0525', toWeek: '2026-05-25', hours: 8 }),
       normRow({ rowId: '702', status: 'Conflict', jobMpmId: 'MPM-1', toCrewParentId: 'CP-IAN-0525', toWeek: '2026-05-25', hours: 8 }),
       normRow({ rowId: '703', status: 'Cleared',  jobMpmId: 'MPM-1', toCrewParentId: 'CP-IAN-0525', toWeek: '2026-05-25', hours: 8 }),
     ];
     const out = translateOverrideRows(rows, PL_JOBS, CREW_PARENTS);
-    check('forceAssignments empty (no Pending in fixture)', out.forceAssignments.length === 0, `got ${out.forceAssignments.length}`);
+    check('forceAssignments empty (Conflict + Cleared skipped)', out.forceAssignments.length === 0, `got ${out.forceAssignments.length}`);
     check('crewExclusions empty', out.crewExclusions.length === 0, `got ${out.crewExclusions.length}`);
-    check('untranslatable empty (non-Pending is silent skip, not translation failure)', out.untranslatable.length === 0, `got ${out.untranslatable.length}`);
+    check('untranslatable empty (silent skip, not a failure)', out.untranslatable.length === 0, `got ${out.untranslatable.length}`);
+  }
+
+  console.log('\nTest 7b: translateOverrideRows — Applied row translates same as Pending (Phase 1.1 persistence fix)');
+  // Spec Section B Step 3 calls for translating Applied rows. Pre-1.1 this
+  // dropped silently — Day 2's --plan run lost the deployed override's
+  // effect, so the next --execute would un-apply work that was on the board.
+  // 1.1 fix: Applied rows translate exactly like Pending. Both shape variants
+  // (pure assign + move) covered to confirm the filter change doesn't perturb
+  // the branch logic.
+  if (typeof translateOverrideRows !== 'function') {
+    console.log('  (skipping — translateOverrideRows not exported)');
+  } else {
+    const rows = [
+      // Pure assign, status=Applied
+      normRow({ rowId: '7b1', status: 'Applied', jobMpmId: 'MPM-1', station: 'Benchwork',
+               toCrewParentId: 'CP-IAN-0525', toWeek: '2026-05-25', hours: 8 }),
+      // Move, status=Applied
+      normRow({ rowId: '7b2', status: 'Applied', jobMpmId: 'MPM-1', station: 'Benchwork',
+               fromCrewParentId: 'CP-IAN-0518', fromWeek: '2026-05-18',
+               toCrewParentId:   'CP-SPN-0525', toWeek:   '2026-05-25', hours: 4 }),
+      // Pure clear, status=Applied
+      normRow({ rowId: '7b3', status: 'Applied', jobMpmId: 'MPM-1', station: 'Benchwork',
+               fromCrewParentId: 'CP-IAN-0518', fromWeek: '2026-05-18',
+               hours: 4 }),
+    ];
+    const out = translateOverrideRows(rows, PL_JOBS, CREW_PARENTS);
+    check('two forceAssignments emitted (pure assign + move)',
+      out.forceAssignments.length === 2,
+      JSON.stringify(out.forceAssignments.map(f => f._sourceRowId)));
+    check('one crewExclusion emitted (pure clear)',
+      out.crewExclusions.length === 1,
+      JSON.stringify(out.crewExclusions.map(e => e._sourceRowId)));
+    check('untranslatable empty', out.untranslatable.length === 0, `got ${out.untranslatable.length}`);
+    check('source row ids surface in emitted entries',
+      out.forceAssignments.some(f => f._sourceRowId === '7b1')
+      && out.forceAssignments.some(f => f._sourceRowId === '7b2')
+      && out.crewExclusions[0]?._sourceRowId === '7b3',
+      JSON.stringify({
+        forces:     out.forceAssignments.map(f => f._sourceRowId),
+        exclusions: out.crewExclusions.map(e => e._sourceRowId),
+      }));
   }
 
   console.log('\nTest 8: mergeForceAssignments — disjoint sets concatenate, no conflicts');

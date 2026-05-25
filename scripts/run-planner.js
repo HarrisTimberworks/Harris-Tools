@@ -115,9 +115,13 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
     }
   }
 
-  const pending = (boards.overrideRows || []).filter(r => r.status === 'Pending');
-  console.log(`\n--- Validating ${pending.length} Pending override row(s) against baseline ---`);
-  const validation = _validateAll(pending, baselinePlan, boards.jobs, boards.crewParents, jobWindows);
+  // Phase 1.1: Pending + Applied both validate. validateAll's filter is the
+  // authoritative gate; this pre-filter is just for the console log + the
+  // count we hand to validateAll's slice. Conflict / Cleared rows skip the
+  // count (they're not "to-be-validated" rows from the operator's POV).
+  const toValidate = (boards.overrideRows || []).filter(r => r.status === 'Pending' || r.status === 'Applied');
+  console.log(`\n--- Validating ${toValidate.length} Pending/Applied override row(s) against baseline ---`);
+  const validation = _validateAll(toValidate, baselinePlan, boards.jobs, boards.crewParents, jobWindows);
 
   console.log('\n=== OVERRIDE VALIDATION ===');
   console.log(`Accepted: ${validation.accepted.length}`);

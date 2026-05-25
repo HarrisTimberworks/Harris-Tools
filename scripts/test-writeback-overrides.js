@@ -284,6 +284,66 @@ const CONFLICT_ROW = (overrides = {}) => ({
     check('gqlFn called once', gqlCalls === 1, `gqlCalls=${gqlCalls}`);
   }
 
+  // ==========================================================================
+  // Phase 1.1 — Applied-row persistence (lifecycle contracts at writeback)
+  // ==========================================================================
+  //
+  // Writeback consumes validationResults.accepted/conflicts; pre-1.1 those
+  // never contained Applied-originated rows because validateAll dropped them.
+  // Post-1.1 they do. Writeback code is unchanged — its behavior already
+  // produces the correct mutations for the new transitions. Tests below
+  // document the system-level contract: an Applied-input row in accepted
+  // produces Status='Applied' + cleared Conflict Reason + Last Run today
+  // (idempotent value-wise; Last Run advances); an Applied-input row in
+  // conflicts flips Status='Conflict' + populates Conflict Reason +
+  // re-stamps Last Run.
+
+  console.log('\nTest 13: Phase 1.1 — Applied-row accepted re-stamps Last Run, clears stale Conflict Reason, Status stays Applied');
+  {
+    const row = ACCEPTED_ROW({ rowId: '1301' });
+    const { mutations } = buildWritebackMutations({ accepted: [row], conflicts: [] }, TODAY);
+    check('one mutation', mutations.length === 1, JSON.stringify(mutations));
+    const m = mutations[0];
+    check('Status=Applied',         m.columnValues[COL.status]?.label === 'Applied', JSON.stringify(m.columnValues));
+    check('Conflict Reason cleared (empty text)',
+      m.columnValues[COL.conflictReason]?.text === '',
+      JSON.stringify(m.columnValues[COL.conflictReason]));
+    check('Last Run stamped today', m.columnValues[COL.lastRun]?.date === TODAY, JSON.stringify(m.columnValues[COL.lastRun]));
+  }
+
+  console.log('\nTest 14: Phase 1.1 — Applied-row that re-validates to Conflict flips Status + populates Conflict Reason');
+  {
+    const row = CONFLICT_ROW({ rowId: '1401', reason: 'delivery pushed; pin week now past delivery' });
+    const { mutations } = buildWritebackMutations({ accepted: [], conflicts: [row] }, TODAY);
+    check('one mutation',           mutations.length === 1, JSON.stringify(mutations));
+    const m = mutations[0];
+    check('Status flips to Conflict',  m.columnValues[COL.status]?.label === 'Conflict', JSON.stringify(m.columnValues));
+    check('Conflict Reason populated',
+      m.columnValues[COL.conflictReason]?.text === 'delivery pushed; pin week now past delivery',
+      JSON.stringify(m.columnValues[COL.conflictReason]));
+    check('Last Run stamped today', m.columnValues[COL.lastRun]?.date === TODAY, JSON.stringify(m.columnValues[COL.lastRun]));
+  }
+
+  console.log('\nTest 15: Phase 1.1 — back-to-back runs of the same Applied row produce identical mutations modulo today (idempotency)');
+  {
+    const row = ACCEPTED_ROW({ rowId: '1501' });
+    const day1 = buildWritebackMutations({ accepted: [row], conflicts: [] }, '2026-05-25');
+    const day2 = buildWritebackMutations({ accepted: [row], conflicts: [] }, '2026-05-26');
+    check('both runs emit one mutation each',
+      day1.mutations.length === 1 && day2.mutations.length === 1,
+      JSON.stringify({ d1: day1.mutations.length, d2: day2.mutations.length }));
+    check('Status identical across runs',
+      day1.mutations[0].columnValues[COL.status]?.label === day2.mutations[0].columnValues[COL.status]?.label,
+      JSON.stringify([day1.mutations[0].columnValues[COL.status], day2.mutations[0].columnValues[COL.status]]));
+    check('Conflict Reason identical across runs',
+      day1.mutations[0].columnValues[COL.conflictReason]?.text === day2.mutations[0].columnValues[COL.conflictReason]?.text,
+      'reasons should both be empty strings on accepted rows');
+    check('Last Run advances day-by-day',
+      day1.mutations[0].columnValues[COL.lastRun]?.date === '2026-05-25'
+      && day2.mutations[0].columnValues[COL.lastRun]?.date === '2026-05-26',
+      JSON.stringify({ d1: day1.mutations[0].columnValues[COL.lastRun], d2: day2.mutations[0].columnValues[COL.lastRun] }));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

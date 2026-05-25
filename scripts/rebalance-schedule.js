@@ -868,9 +868,16 @@ let activeCrewExclusions = null;
 //     propagation (i.e., we don't auto-subtract from-side hours from the plan;
 //     the to-side commitment is the load-bearing claim).
 //
-// Non-Pending rows (Applied / Conflict / Cleared) are silently skipped — they
-// were translated on a prior run; re-translating them would either double-apply
-// (Applied) or re-surface conflicts the operator already saw (Conflict).
+// Phase 1.1: Pending + Applied rows both translate. Conflict / Cleared rows
+// skip silently — Conflict rows require an operator's Conflict→Pending flip
+// in monday UI to retry; Cleared rows are terminal. Pre-1.1 this filter
+// was Pending-only, which dropped Applied rows on subsequent --plan runs and
+// silently un-applied their effect at the next --execute. Spec Section B
+// Step 3 calls for translating Applied rows; this filter now meets that.
+//
+// Translating an Applied row on Day N produces the same forceAssignment /
+// crewExclusion it did on Day 1 (the row's data hasn't changed, only its
+// Status). Idempotent.
 //
 // Unresolved refs (Master PM id with no PL row, or Crew Allocation parent id
 // with no matching crewParent) defer to an `untranslatable` bucket so B5's
@@ -891,7 +898,7 @@ function translateOverrideRows(rows, plJobs, crewParents) {
   }
 
   for (const row of rows || []) {
-    if (row.status !== 'Pending') continue;
+    if (row.status !== 'Pending' && row.status !== 'Applied') continue;
 
     const job = jobByMpm.get(String(row.jobMpmId));
     if (!job) {

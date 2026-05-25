@@ -265,10 +265,19 @@ function resolveRow(rawRow, plJobs, crewParents) {
   };
 }
 
-// Partition Pending rows into { accepted, conflicts }. Non-Pending rows
-// (Applied / Conflict / Cleared) are dropped silently — they were validated
-// on a prior run. Re-validating them would either double-write (Applied)
-// or re-surface stale conflicts.
+// Partition Pending + Applied rows into { accepted, conflicts }. Conflict
+// and Cleared rows are dropped silently — Conflict rows need an operator's
+// explicit Conflict→Pending flip in monday UI to retry; Cleared rows are
+// terminal.
+//
+// Phase 1.1: Applied rows re-validate each run so they keep their effect
+// across days. Pre-1.1 this filter was Pending-only, and an Applied row
+// from Day 1 lost its forceAssignment on Day 2's --plan — spec Section B
+// Step 3 ("Translate each Applied row into an internal forceAssignment")
+// wasn't met. The re-validation also gives the planner a chance to flip
+// Applied → Conflict if the baseline shifted (delivery push, capacity
+// shrink, etc.). Auto-stale automation handles the row at its natural
+// end-of-life when the row's relevant week passes.
 //
 // Each accepted entry is the resolved row plus { decision: 'accepted',
 // softWarning? } so the caller can both translate into forceAssignments and
@@ -281,7 +290,7 @@ function validateAll(rawRows, baselinePlan, plJobs, crewParents, jobWindows) {
   const conflicts = [];
 
   for (const raw of rawRows || []) {
-    if (raw.status !== 'Pending') continue;
+    if (raw.status !== 'Pending' && raw.status !== 'Applied') continue;
 
     const resolved = resolveRow(raw, plJobs, crewParents);
     if (!resolved.ok) {

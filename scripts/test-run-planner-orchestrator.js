@@ -488,6 +488,96 @@ function makeFakeBoards() {
       JSON.stringify(Object.keys(validateArgs?.jobWindows || {})));
   }
 
+  console.log('\nTest 11: Phase 1.1 — Day-2 simulation: Applied row flows through validateAll, writeback, Pass 2 (persistence fix)');
+  {
+    // Pre-1.1: an Applied row from Day 1 would be silently dropped on Day 2
+    // (validateAll filtered Pending-only). Result: 0 forces in Pass 2 → the
+    // deployed override silently un-applies on next --execute. This test
+    // simulates Day 2: the board carries a single row in Applied status,
+    // and we assert it flows through the full pipeline.
+    //
+    // Note: this is the orchestrator-side guarantee. The validateAll filter
+    // change is unit-tested in test-validate-overrides.js (Tests 39–42); the
+    // translateOverrideRows filter change in test-overrides-read-pipeline.js
+    // (Tests 7 + 7b). This test confirms the orchestrator routes the Applied
+    // row through both correctly.
+    const boards = {
+      jobs: [
+        { id: 'PL-A', masterPmId: 'MPM-A', name: 'Job A', delivery: '2026-06-12', status: 'Not Started',
+          hours: { eng: 4, panel: 8, bench: 16, prefin: 8, postfin: 8 } },
+      ],
+      crewParents: [
+        { parentId: 'CP-IAN-0525', crew: 'Ian', week: '2026-05-25', base: 40, timeOff: 0, nonProd: 0 },
+      ],
+      timeOff: [],
+      existingSubs: [],
+      overrideRows: [
+        // A single row in Applied status — Day-2 scenario.
+        { rowId: 'R-APPLIED', jobMpmId: 'MPM-A', station: 'Benchwork',
+          fromCrewParentId: null, fromWeek: null,
+          toCrewParentId: 'CP-IAN-0525', toWeek: '2026-05-25',
+          hours: 8, status: 'Applied', allowOverCap: false },
+      ],
+    };
+
+    let validateAllSawRow = null;
+    let writebackSawRow   = null;
+    const callLog = [];
+
+    const stubLoadAll       = async () => { callLog.push('loadAll'); return boards; };
+    let runPlanCalls = 0;
+    const stubRunPlan       = async (b) => {
+      runPlanCalls++;
+      callLog.push(`runPlan:${runPlanCalls}:overrideRows=${(b.overrideRows || []).length}`);
+      return { mode: 'plan', placements: [], capacityGrid: {}, warnings: [] };
+    };
+    const stubValidateAll   = (rows, baseline, plJobs, crewParents, jobWindows) => {
+      validateAllSawRow = rows.find(r => r.rowId === 'R-APPLIED') || null;
+      // Real validateAll would accept this row (passes all checks against
+      // the synthetic baseline). Stub mirrors that outcome so the
+      // orchestrator can carry it into Pass 2.
+      return {
+        accepted: [{ rowId: 'R-APPLIED', decision: 'accepted',
+                     jobId: 'PL-A', station: 'Benchwork',
+                     fromCrew: null, fromWeek: null,
+                     toCrew: 'Ian', toWeek: '2026-05-25', hours: 8 }],
+        conflicts: [],
+      };
+    };
+    const stubWriteRowDecisions = async (validation, opts) => {
+      writebackSawRow = (validation.accepted || []).find(a => a.rowId === 'R-APPLIED') || null;
+      return { written: validation.accepted.length + validation.conflicts.length, skipped: 0, errors: [] };
+    };
+    const stubComputeWindows = (job) =>
+      ({ bench: { start: '2026-05-18', end: '2026-05-29' } });
+
+    const fakeFs = makeFakeFs();
+    const realLog = console.log; console.log = () => {};
+    try {
+      await runPlanner({
+        mode: 'plan',
+        deps: {
+          loadAll: stubLoadAll, runPlan: stubRunPlan, validateAll: stubValidateAll,
+          writeRowDecisions: stubWriteRowDecisions, computeWindows: stubComputeWindows,
+          fs: fakeFs.fs, logsDir: '/fake/logs', now: () => new Date('2026-05-26T20:00:00Z'),
+        },
+      });
+    } finally { console.log = realLog; }
+
+    check('validateAll received the Applied row (not filtered upstream)',
+      validateAllSawRow !== null && validateAllSawRow.status === 'Applied',
+      JSON.stringify(validateAllSawRow));
+    check('writeRowDecisions received the accepted decision for the Applied row',
+      writebackSawRow !== null && writebackSawRow.rowId === 'R-APPLIED',
+      JSON.stringify(writebackSawRow));
+    // Pass 2's runPlan call should see overrideRows filtered to only the
+    // accepted rowIds — i.e., the original R-APPLIED row carried forward.
+    const pass2Log = callLog.find(s => s.startsWith('runPlan:2'));
+    check('Pass 2 saw the Applied row in overrideRows (count 1)',
+      pass2Log === 'runPlan:2:overrideRows=1',
+      JSON.stringify({ pass2Log, fullLog: callLog }));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);
