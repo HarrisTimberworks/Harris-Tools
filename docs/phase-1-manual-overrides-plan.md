@@ -1049,6 +1049,61 @@ Filing this against B7 follow-up alongside the consistency-fail row that's now o
 
 ---
 
+## B7-followup results — 2026-05-25
+
+Closes the force-application gap from the "## B7 results" section above by landing Options 1 + 2 from its Recommendation paragraph: two new strict validator checks plus a backwards-compat extension to `validateAll`'s signature.
+
+### Code changes (B7-followup commit)
+
+- **`scripts/validate-overrides.js`** — adds `checkFieldUnsupported(row)` (rejects `station='Field'` since the planner has no execution path) and `checkWindowMembership(row, jobWindows)` (rejects `toWeek` outside the job's computed station window, or zero-hours stations where no window exists). Both match the strict-check shape of the existing delivery-date / consistency / capacity checks.
+- **`validateAll`** grows an optional 5th arg `jobWindows = { [jobId]: <computeWindows result> }`. When undefined, the window-membership check silent-passes — preserves backwards-compat with the original B5 contract.
+- **`scripts/run-planner.js`** — after `loadAll()`, iterates `boards.jobs` and builds the `jobWindows` map by calling `computeWindows(job)` per job, with per-job `try/catch` so a throw from `assertFinishingCycleValid` doesn't abort the whole validation pass.
+- **Station-name → window-key translation** lives in `STATION_TO_WINDOW_KEY`, mirroring `computeWindows()`'s output: Engineering→eng, Panel Processing→panel, Benchwork→bench, Pre Fin Cab Assembly→prefin, Post Fin Cab Assembly→postfin, Pack & Ship + Delivery → packShip (single combined window — `computeWindows` emits one `packShip` object both stations share, per `rebalance-schedule.js:1747`).
+- **TDD**: 17 new tests in `test-validate-overrides.js` (77 checks total) + 2 new orchestrator tests in `test-run-planner-orchestrator.js` (40 checks total). Full sweep: 13 files green, 117 checks confirmed, no regressions.
+
+### Simulated re-run against the same 9 smoke rows (no writeback)
+
+Ran `validateAll` programmatically with all 9 rows treated as Pending in-memory and a fresh Pass-1 baseline (the saved Pass-2 plan from the prior run reflects accepted-row state; not the right comparison baseline). Result:
+
+- **Old validator** (B7 run): 6 Accepted + 3 Conflict. Five of the six accepted rows were silently dropped in Pass 2 — Status=Applied on board, no plan effect.
+- **New validator** (B7-followup): **1 Accepted + 8 Conflict**. Only Row 2 (pure clear) remains Applied, because `crewExclusions` are not gated by `scheduleStation`'s window iteration.
+
+Per-row decision delta:
+
+| # | Shape | Old | New | Improvement |
+|---|---|---|---|---|
+| 1 | Field pure assign | Applied (silent drop) | Conflict — "Field is unsupported in Phase 1…" | ✓ honest no |
+| 2 | Pure clear | Applied (works) | Applied (works) | unchanged |
+| 3 | Spencer 6-08 Pre Fin McMorris | Applied (silent drop) | Conflict — "outside Pre Fin Cab Assembly window 2026-05-18 → 2026-06-04" | ✓ honest no |
+| 4 | Ian 6-15 Bench R5-P2 | Applied (silent drop) | Conflict — "outside Benchwork window 2026-06-01 → 2026-06-12" | ✓ honest no |
+| 5 | Bob 6-15 Bench R5-P2 | Applied (silent drop) | Conflict — "outside Benchwork window 2026-06-01 → 2026-06-12" | ✓ honest no |
+| 6 | Quince P&S 6-22 past delivery | Conflict (delivery) | Conflict (delivery + outside P&S window) | reasons combined |
+| 7 | Bob 6-22 Pre Fin Atom over cap, no allow | Conflict (capacity) | Conflict (no Pre Fin window for Atom + capacity) | stricter |
+| 8 | Ian 6-22 Pre Fin Atom over cap, allow | Applied + soft warn (silent drop) | Conflict — "no Pre Fin Cab Assembly window (zero hours for this station)" | ✓ honest no |
+| 9 | Ken 5-25 Panel McMorris consistency-fail | Conflict (consistency) | Conflict (outside window + consistency) | reasons combined |
+
+Atom Computing's `hours.prefin = 0` so `computeWindows` emits no prefin entry — hence the "no Pre Fin Cab Assembly window" reason for rows 7 + 8. Operators get an honest no instead of a fake yes.
+
+### Live writeback re-run
+
+Scheduled as the final destructive-write confirmation before Phase 1 close-out: Chris flips the 9 rows' Status back to Pending (via monday API or UI), then `node scripts/run-planner.js --plan` runs in terminal Claude Code, and we confirm monday Status + Conflict Reason + Last Run rewrite correctly under the new validator. Expected outcome: matches the simulated decision matrix above (1 Applied, 8 Conflict). Captured here in chat; not amended into this commit.
+
+### Phase 2 deferred — Option B (planner permissive)
+
+The complement architectural response to the validator-strict approach (Option A landed here) is **Option B: make the planner permissive** of out-of-window forces — either by extending the affected window when a force lands outside it, or by adding a separate pinned-placement pass that runs after `scheduleStation` and force-places regardless of window. Deferred to Phase 2 for three reasons:
+
+1. **Placement semantics change.** Out-of-window forces would interact with finishing-cycle gap math (Pre-Fin must complete before Finish Drop, etc.). The A2 fix pinned that math; relaxing it risks the same class of cascade we just fixed.
+2. **Capacity View / Weekly Briefing presentation.** Pinned out-of-window work needs a defined surface in Phase 2's output docs — where does it show, with what indicator, how does the operator distinguish it from auto-routed work? Phase 2 problem.
+3. **No surfaced operator need yet.** Phase 1's spec primitive ("move N hours of (job × station) from (crew × week) → (crew × week)") was designed assuming the move stays inside the planner's window vocabulary. When a Phase 2 operator surfaces a concrete need to pin out-of-window (aligning with an external constraint the planner doesn't know about), revisit.
+
+For Phase 1 close-out, Option A (validator strict, honest no) is correct. The spec's "move" primitive turns out to be more constrained than originally designed — operators can only move work within the auto-computed window. The validator now reflects that constraint truthfully.
+
+### Phase 1 close-out
+
+With B7-followup landed and the live re-run confirming, Phase 1 satisfies the spec's locked end-state: **board exists, planner reads it, validation works** (now with window-membership + Field rejection on top of the original three strict checks), **schema is proven, Chris still triggers runs from Claude Code.** Phase 2 (outputs automation), Phase 3 (run automation), Phase 4 (cloud migration), Phase 5 (QoL) remain queued per Section F.
+
+---
+
 ## Section F — Out of scope for Phase 1
 
 Do NOT attempt these in Phase 1 — they belong to later phases:
