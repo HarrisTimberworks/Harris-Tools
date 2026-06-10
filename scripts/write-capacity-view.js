@@ -394,8 +394,7 @@ if (require.main === module) {
   (async () => {
     const dryRun = process.env.DRY_RUN === '1';
     const reb = require('./rebalance-schedule.js');
-    const { buildCapacityViewDoc } = require('./capacity-view-generator.js');
-    const { resolveRow } = require('./validate-overrides.js');
+    const { buildCapacityViewDoc, tuplesFromPersistedValidation } = require('./capacity-view-generator.js');
 
     const logsDir = path.join(__dirname, '..', 'logs');
     const latest = reb.findLatestPlanFile(logsDir);
@@ -414,15 +413,11 @@ if (require.main === module) {
     const validationPath = path.join(logsDir, validationFile);
     if (fs.existsSync(validationPath)) {
       const validation = JSON.parse(fs.readFileSync(validationPath, 'utf8'));
-      // resolveRow turned the row into { jobId, station, toCrew, toWeek }
-      // already; pass through directly.
-      acceptedOverrides = (validation.accepted || []).map(a => ({
-        jobId: a.jobId,
-        station: a.station,
-        crew: a.toCrew,
-        week: a.toWeek,
-      }));
-      console.log(`Loaded ${acceptedOverrides.length} accepted override(s) for 🔧 indicator.`);
+      // C5: prefer the acceptedTuples persisted by run-planner.js (full
+      // semantics, incl. pure-clear diffs); legacy fallback maps to-side
+      // rows only. See tuplesFromPersistedValidation docstring.
+      acceptedOverrides = tuplesFromPersistedValidation(validation);
+      console.log(`Loaded ${acceptedOverrides.length} accepted-override tuple(s) for 🔧 indicator.`);
     }
 
     console.log('Fetching jobs + timeOff from monday for markdown generation...');

@@ -106,7 +106,11 @@ function buildPriorityOrder(weekISO, plan, jobsById) {
       groups.set(key, g);
     }
 
-    const isPinned = !!(p.pinned || p.force);
+    // NB: the planner emits `forced: true` (rebalance-schedule.js:1091).
+    // `pinned`/`force` are kept for synthetic-fixture backwards-compat; the
+    // real-plan field is `forced`. See test-derive-override-tuples.js
+    // Tests 14–15 (same incident family as the `avail` field-name bug).
+    const isPinned = !!(p.pinned || p.force || p.forced);
     const existing = g.stationMap.get(p.station);
     if (existing) {
       existing.hours += Number(p.hours || 0);
@@ -247,7 +251,9 @@ function formatLoadSub(committed) {
 // italic suffix when the placement is force-pinned, optional *(sub)*
 // italic suffix when the crew is a subcontractor.
 function formatHrsCell(placement, isSub, options) {
-  const pinned = !!(placement.pinned || placement.force);
+  // `forced` is the planner's canonical field (rebalance-schedule.js:1091);
+  // `pinned`/`force` accepted for synthetic fixtures.
+  const pinned = !!(placement.pinned || placement.force || placement.forced);
   const wrenched = (options?.acceptedOverrides || []).some(o =>
     String(o.jobId) === String(placement.jobId) &&
     o.station === placement.station &&
@@ -528,10 +534,90 @@ function buildCapacityViewDoc(plan, jobsById, timeOff, options) {
   return buildHeader(generatedAt) + sections.join('') + buildLegend();
 }
 
+// ============================================================================
+// C5 — accepted-overrides → 🔧 tuple derivation
+// ============================================================================
+//
+// Bridges validate-overrides.js's accepted rows to the acceptedOverrides
+// matcher consumed by formatHrsCell. Semantics settled 2026-06-10 session
+// (docs/phase-2-manual-overrides-plan.md §F.4/§F.5/§D):
+//
+//   - To-side rows (move / pure assign): the override drives exactly the
+//     destination cell → { jobId, station, crew: toCrew, week: toWeek }.
+//   - Pure-clear rows (empty To): the override drives placement via
+//     crewExclusion — wrench every final-plan (crew × week) cell of this
+//     (jobId × station) whose hours-sum differs from the baseline plan.
+//     Unchanged cells aren't override-driven. Requires BOTH plans, so this
+//     runs inside run-planner.js (C8) where both are in memory; the result
+//     is persisted as validation.acceptedTuples for standalone callers.
+//   - Stale-🔧 (F.5b): derivation input is the CURRENT run's accepted set.
+//     A row that re-validated to Conflict is absent → its old cells lose
+//     the wrench with zero extra logic.
+//   - F.4: JSON forceAssignments never appear in accepted → never wrench.
+//     Their marker remains *(pinned)*.
+function deriveAcceptedOverrideTuples(accepted, baselinePlan, finalPlan) {
+  const tuples = [];
+  const seen = new Set();
+  const push = (jobId, station, crew, week) => {
+    const k = `${jobId}|${station}|${crew}|${week}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    tuples.push({ jobId, station, crew, week });
+  };
+
+  // Sum a plan's placement hours for one (jobId × station), keyed crew|week.
+  const sumByCell = (plan, jobId, station) => {
+    const m = new Map();
+    for (const p of (plan && plan.placements) || []) {
+      if (String(p.jobId) !== String(jobId)) continue;
+      if (p.station !== station) continue;
+      const k = `${p.crew}|${p.week}`;
+      m.set(k, (m.get(k) || 0) + Number(p.hours || 0));
+    }
+    return m;
+  };
+
+  const EPS = 1e-6;
+  for (const a of accepted || []) {
+    if (a.toCrew && a.toWeek) {
+      push(a.jobId, a.station, a.toCrew, a.toWeek);
+      continue;
+    }
+    // Pure clear — diff final vs baseline cells of (jobId × station).
+    const base = sumByCell(baselinePlan, a.jobId, a.station);
+    const fin  = sumByCell(finalPlan,    a.jobId, a.station);
+    for (const [cell, hrs] of fin) {
+      const b = base.get(cell);
+      if (b === undefined || Math.abs(b - hrs) > EPS) {
+        const sep = cell.indexOf('|');
+        push(a.jobId, a.station, cell.slice(0, sep), cell.slice(sep + 1));
+      }
+    }
+  }
+  return tuples;
+}
+
+// For callers that read a persisted override-validation JSON instead of
+// holding both plans in memory (the write-capacity-view.js CLI). Prefer the
+// acceptedTuples array persisted by run-planner.js (C8 — full semantics
+// including pure-clear diffs); fall back to a to-side-only mapping for
+// pre-C8 validation files, where pure clears are skipped (the baseline
+// needed to diff them isn't on disk).
+function tuplesFromPersistedValidation(validation) {
+  if (Array.isArray(validation && validation.acceptedTuples)) {
+    return validation.acceptedTuples;
+  }
+  return ((validation && validation.accepted) || [])
+    .filter(a => a.toCrew && a.toWeek)
+    .map(a => ({ jobId: a.jobId, station: a.station, crew: a.toCrew, week: a.toWeek }));
+}
+
 module.exports = {
   buildPriorityOrder,
   buildWeekSection,
   buildCapacityViewDoc,
+  deriveAcceptedOverrideTuples,
+  tuplesFromPersistedValidation,
   // Exposed for C3 / C6 reuse without re-implementing.
   STATION_ABBR,
   SOFT_CAP_MULTIPLIER,
