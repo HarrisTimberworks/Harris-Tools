@@ -621,4 +621,6 @@ module.exports = {
   // Exposed for C3 / C6 reuse without re-implementing.
   STATION_ABBR,
   SOFT_CAP_MULTIPLIER,
+  formatGeneratedAt,
+  toMondayISO,
 };
