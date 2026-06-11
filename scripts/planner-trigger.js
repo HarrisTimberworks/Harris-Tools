@@ -284,6 +284,18 @@ if (require.main === module) {
       console.log(`planner-trigger (${mode}): ${r.skipped}`);
     }
   }).catch(e => {
+    // Transient network loss (machine waking, wifi down) hits the status
+    // read first. A poll tick has nothing to do offline — one short line,
+    // not a stack trace per minute for the outage's duration. The next
+    // tick self-heals. Scheduled runs keep the full trace (a missed
+    // Saturday run should be loudly visible in the log).
+    const cause = e && (e.cause || e);
+    const isNetwork = /fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN/.test(
+      `${e && e.message} ${cause && cause.code} ${cause && cause.message}`);
+    if (mode === 'poll' && isNetwork) {
+      console.log(`planner-trigger (poll): network unavailable — skipping tick (${(cause && cause.code) || 'fetch failed'})`);
+      process.exit(1);
+    }
     console.error('planner-trigger fatal:', e);
     process.exit(1);
   });
