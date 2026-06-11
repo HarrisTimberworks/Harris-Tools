@@ -578,6 +578,192 @@ function makeFakeBoards() {
       JSON.stringify({ pass2Log, fullLog: callLog }));
   }
 
+  // ===========================================================================
+  // C8 — outputs wire-up (Capacity View + Weekly Briefing after writeback)
+  // ===========================================================================
+  //
+  // Writers are INJECTED-ONLY at the runPlanner level: when deps omit
+  // writeCapacityView/writeWeeklyBriefing, the outputs stage is skipped with
+  // an explicit console note. The CLI entry wires the real writers. This
+  // keeps every orchestrator unit test hermetic by construction — no
+  // accidental live doc mutations even when MONDAY_API_TOKEN is in env.
+
+  function makeOutputBoards() {
+    const boards = makeFakeBoards();
+    boards.timeOff = [];
+    return boards;
+  }
+
+  function makeOutputStubs({ failCapacityView = false } = {}) {
+    const calls = [];
+    const baselineReport = { mode: 'plan', placements: [], capacityGrid: {}, warnings: [] };
+    const finalReport = {
+      mode: 'plan',
+      placements: [{ crew: 'Ian', week: '2026-05-25', jobId: 'PL-A', jobName: 'Job A', masterPmId: 'MPM-A', station: 'Benchwork', hours: 8, forced: true }],
+      capacityGrid: { Ian: { '2026-05-25': { committed: 8, avail: 40 } } },
+      warnings: [],
+    };
+    let pass = 0;
+    return {
+      calls,
+      baselineReport,
+      finalReport,
+      deps: {
+        loadAll: async () => makeOutputBoards(),
+        runPlan: async () => (++pass === 1 ? baselineReport : finalReport),
+        validateAll: () => ({
+          accepted: [{ rowId: 'R1', decision: 'accepted', jobId: 'PL-A', jobMpmId: 'MPM-A', station: 'Benchwork',
+                       fromCrew: null, fromWeek: null, toCrew: 'Ian', toWeek: '2026-05-25', hours: 8 }],
+          conflicts: [],
+        }),
+        writeRowDecisions: async () => ({ written: 1, skipped: 0, errors: [] }),
+        writeCapacityView: async (objectId, markdown, opts) => {
+          calls.push({ kind: 'cv', objectId, markdown, opts });
+          if (failCapacityView) throw new Error('synthetic capacity-view failure');
+          return { blocksRead: 5, blocksDeleted: 5, deleteErrors: [], blockIdsAdded: ['a'], dryRun: !!opts?.dryRun, savedMarkdownPath: '/fake/logs/capacity-view-x.md' };
+        },
+        writeWeeklyBriefing: async (briefing, opts) => {
+          calls.push({ kind: 'wb', briefing, opts });
+          return { objectId: 'o', created: false, renamed: true, blocksRead: 3, blocksDeleted: 3, deleteErrors: [], blockIdsAdded: ['b'], dryRun: !!opts?.dryRun, savedMarkdownPath: '/fake/logs/weekly-briefing-x.md' };
+        },
+        now: () => new Date('2026-05-22T20:00:00Z'),
+      },
+    };
+  }
+
+  console.log('\nTest 12: C8 — validation JSON persists acceptedTuples (destination-cell tuple for to-side row)');
+  {
+    const stubs = makeOutputStubs();
+    const fakeFs = makeFakeFs();
+    const realLog = console.log; console.log = () => {};
+    let result;
+    try {
+      result = await runPlanner({ mode: 'plan', deps: { ...stubs.deps, fs: fakeFs.fs, logsDir: '/fake/logs' } });
+    } finally { console.log = realLog; }
+
+    const vWrite = fakeFs.writes.filter(w => /override-validation-.*\.json$/.test(w.path)).pop();
+    const persisted = vWrite ? JSON.parse(vWrite.content) : null;
+    check('validation JSON has acceptedTuples array', Array.isArray(persisted?.acceptedTuples), JSON.stringify(persisted)?.slice(0, 300));
+    check('tuple is the destination cell (Ian 2026-05-25 Benchwork PL-A)',
+      persisted?.acceptedTuples?.length === 1
+      && persisted.acceptedTuples[0].crew === 'Ian'
+      && persisted.acceptedTuples[0].week === '2026-05-25'
+      && persisted.acceptedTuples[0].station === 'Benchwork'
+      && String(persisted.acceptedTuples[0].jobId) === 'PL-A',
+      JSON.stringify(persisted?.acceptedTuples));
+    check('result.outputs.acceptedTuples matches', result?.outputs?.acceptedTuples?.length === 1, JSON.stringify(result?.outputs));
+  }
+
+  console.log('\nTest 13: C8 — both writers called after persist; CV gets 8-week doc w/ 🔧, briefing gets single-week shape');
+  {
+    const stubs = makeOutputStubs();
+    const fakeFs = makeFakeFs();
+    const captured = [];
+    const realLog = console.log; console.log = (...a) => captured.push(a.join(' '));
+    let result;
+    try {
+      result = await runPlanner({ mode: 'plan', deps: { ...stubs.deps, fs: fakeFs.fs, logsDir: '/fake/logs' } });
+    } finally { console.log = realLog; }
+
+    const cv = stubs.calls.find(c => c.kind === 'cv');
+    const wb = stubs.calls.find(c => c.kind === 'wb');
+    check('capacity-view writer called once', stubs.calls.filter(c => c.kind === 'cv').length === 1, JSON.stringify(stubs.calls.map(c => c.kind)));
+    check('briefing writer called once', stubs.calls.filter(c => c.kind === 'wb').length === 1, JSON.stringify(stubs.calls.map(c => c.kind)));
+    check('CV writer received the live doc object id 18410103423', String(cv?.objectId) === '18410103423', String(cv?.objectId));
+    check('CV markdown is the C3 doc (header + legend present)',
+      /\*\*Generated:\*\*/.test(cv?.markdown || '') && /## Legend/.test(cv?.markdown || ''), (cv?.markdown || '').slice(0, 150));
+    check('CV markdown carries 🔧 on the overridden cell',
+      /🔧 8/.test(cv?.markdown || ''), (cv?.markdown || '').split('\n').filter(l => l.includes('Ian')).join(' // '));
+    check('briefing writer received { title, markdown }',
+      typeof wb?.briefing?.title === 'string' && /HTW Weekly Briefing — Week of \d{4}-\d{2}-\d{2}/.test(wb.briefing.title) && typeof wb?.briefing?.markdown === 'string',
+      JSON.stringify(wb?.briefing?.title));
+    check('briefing markdown is single-week (exactly one "## Week of")',
+      ((wb?.briefing?.markdown || '').match(/^## Week of /gm) || []).length === 1, '');
+    check('plan file written BEFORE writers ran (persist precedes outputs)',
+      fakeFs.writes.some(w => /rebalance-plan-.*\.json$/.test(w.path)), JSON.stringify(fakeFs.writes.map(w => w.path)));
+    const blob = captured.join('\n');
+    check('console prints === OUTPUTS === section', /=== OUTPUTS ===/.test(blob), blob.slice(-600));
+    check('result.outputs has both writer results', result?.outputs?.capacityView?.ok === true && result?.outputs?.weeklyBriefing?.ok === true, JSON.stringify(result?.outputs));
+  }
+
+  console.log('\nTest 14: C8 — DRY_RUN=1 propagates dryRun:true to both writers');
+  {
+    const stubs = makeOutputStubs();
+    const fakeFs = makeFakeFs();
+    const prevEnv = process.env.DRY_RUN;
+    process.env.DRY_RUN = '1';
+    const realLog = console.log; console.log = () => {};
+    try {
+      await runPlanner({ mode: 'plan', deps: { ...stubs.deps, fs: fakeFs.fs, logsDir: '/fake/logs' } });
+    } finally {
+      console.log = realLog;
+      if (prevEnv === undefined) delete process.env.DRY_RUN; else process.env.DRY_RUN = prevEnv;
+    }
+    const cv = stubs.calls.find(c => c.kind === 'cv');
+    const wb = stubs.calls.find(c => c.kind === 'wb');
+    check('CV writer got dryRun: true', cv?.opts?.dryRun === true, JSON.stringify(cv?.opts));
+    check('briefing writer got dryRun: true', wb?.opts?.dryRun === true, JSON.stringify(wb?.opts));
+  }
+
+  console.log('\nTest 15: C8 — capacity-view failure logged loudly, briefing still runs, runPlanner does NOT throw');
+  {
+    const stubs = makeOutputStubs({ failCapacityView: true });
+    const fakeFs = makeFakeFs();
+    const captured = [];
+    const realLog = console.log; console.log = (...a) => captured.push(a.join(' '));
+    let result, threw = false;
+    try {
+      result = await runPlanner({ mode: 'plan', deps: { ...stubs.deps, fs: fakeFs.fs, logsDir: '/fake/logs' } });
+    } catch (e) {
+      threw = true;
+    } finally { console.log = realLog; }
+
+    check('runPlanner did not throw', threw === false, '');
+    check('briefing writer still ran after CV failure', stubs.calls.some(c => c.kind === 'wb'), JSON.stringify(stubs.calls.map(c => c.kind)));
+    check('result.outputs.capacityView.ok === false with error', result?.outputs?.capacityView?.ok === false && /synthetic/.test(result?.outputs?.capacityView?.error || ''), JSON.stringify(result?.outputs?.capacityView));
+    check('result.outputs.weeklyBriefing.ok === true', result?.outputs?.weeklyBriefing?.ok === true, JSON.stringify(result?.outputs?.weeklyBriefing));
+    const blob = captured.join('\n');
+    check('failure surfaced loudly in console', /✗.*[Cc]apacity [Vv]iew.*FAILED/.test(blob), blob.slice(-500));
+  }
+
+  console.log('\nTest 16: C8 — writers absent from deps → outputs stage skipped with explicit note (hermetic default)');
+  {
+    const stubs = makeOutputStubs();
+    const { writeCapacityView, writeWeeklyBriefing, ...depsNoWriters } = stubs.deps;
+    const fakeFs = makeFakeFs();
+    const captured = [];
+    const realLog = console.log; console.log = (...a) => captured.push(a.join(' '));
+    let result;
+    try {
+      result = await runPlanner({ mode: 'plan', deps: { ...depsNoWriters, fs: fakeFs.fs, logsDir: '/fake/logs' } });
+    } finally { console.log = realLog; }
+    check('no writer calls', stubs.calls.length === 0, JSON.stringify(stubs.calls.map(c => c.kind)));
+    check('console notes outputs skipped', /OUTPUTS[^\n]*skipped/i.test(captured.join('\n')), captured.join('\n').slice(-400));
+    check('acceptedTuples still derived + persisted (writers not needed for tuples)',
+      result?.outputs?.acceptedTuples?.length === 1, JSON.stringify(result?.outputs));
+  }
+
+  console.log('\nTest 17: C8 — execute mode never touches writers or tuple derivation');
+  {
+    const stubs = makeOutputStubs();
+    const fakeFs = makeFakeFs();
+    const planContent = JSON.stringify({ mode: 'plan', placements: [{ crew: 'Ian' }] });
+    fakeFs.fs.writeFileSync(path.join('/fake/logs', 'rebalance-plan-2026-05-22.json'), planContent);
+    const realLog = console.log; console.log = () => {};
+    try {
+      await runPlanner({
+        mode: 'execute',
+        deps: {
+          ...stubs.deps,
+          runExecute: async () => ({ ok: true }),
+          findLatestPlanFile: () => 'rebalance-plan-2026-05-22.json',
+          fs: fakeFs.fs, logsDir: '/fake/logs',
+        },
+      });
+    } finally { console.log = realLog; }
+    check('no writer calls in execute mode', stubs.calls.length === 0, JSON.stringify(stubs.calls.map(c => c.kind)));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

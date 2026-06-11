@@ -45,6 +45,9 @@ const path = require('path');
 const reb = require('./rebalance-schedule.js');
 const { validateAll: realValidateAll } = require('./validate-overrides.js');
 const { writeRowDecisions: realWriteRowDecisions } = require('./writeback-overrides.js');
+const { buildCapacityViewDoc, deriveAcceptedOverrideTuples } = require('./capacity-view-generator.js');
+const { buildWeeklyBriefingDoc } = require('./weekly-briefing-generator.js');
+const { CAPACITY_VIEW_OBJECT_ID } = require('./write-capacity-view.js');
 
 function isoOfDate(d) {
   const y = d.getUTCFullYear();
@@ -160,6 +163,14 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   console.log(`\n--- Pass 2: final plan (${finalOverrideRows.length} accepted override row(s) applied) ---`);
   const finalPlan = await _runPlan(finalBoards);
 
+  // C5/C8 — derive the 🔧 tuple set BEFORE persisting validation, so the
+  // on-disk override-validation JSON carries acceptedTuples for standalone
+  // writer CLIs (write-capacity-view.js / write-weekly-briefing.js read it
+  // via tuplesFromPersistedValidation). Needs both plans: pure-clear rows
+  // wrench by diffing final vs baseline cells.
+  const acceptedTuples = deriveAcceptedOverrideTuples(validation.accepted, baselinePlan, finalPlan);
+  validation.acceptedTuples = acceptedTuples;
+
   // Persist final plan + validation result. NOTE: runPlan itself writes a
   // rebalance-plan-<today>.json inside the call (line ~1828 of
   // rebalance-schedule.js); we overwrite here with the same filename to
@@ -173,7 +184,67 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   console.log(`\nFinal plan saved: ${planFile}`);
   console.log(`Validation result saved: ${validationFile}`);
 
-  return { baselinePlan, validation, finalPlan, planFile, validationFile };
+  // ==========================================================================
+  // C8 — outputs stage (Capacity View + Weekly Briefing), per D5: fire at
+  // the end of --plan, after writeback + persist. Writers are INJECTED-ONLY
+  // here; the CLI entry wires the real implementations. Unit tests that omit
+  // them are hermetic by construction — no accidental live doc mutations
+  // even with MONDAY_API_TOKEN in env.
+  //
+  // Failure policy (spec "Failure handling between steps"): each writer is
+  // independent; a Capacity View failure is logged loudly and the Weekly
+  // Briefing still runs. runPlanner does not throw — the plan + validation
+  // files are already saved, and the writers are re-runnable standalone.
+  // ==========================================================================
+  const _writeCapacityView   = deps.writeCapacityView;
+  const _writeWeeklyBriefing = deps.writeWeeklyBriefing;
+  const outputs = { acceptedTuples, capacityView: null, weeklyBriefing: null };
+
+  if (!_writeCapacityView && !_writeWeeklyBriefing) {
+    console.log('\n=== OUTPUTS === skipped (no writers wired — CLI entry provides them)');
+  } else {
+    console.log('\n=== OUTPUTS ===');
+    if (_dryRun) console.log('  DRY RUN MODE — writers will not fire mutations');
+    const jobsById = {};
+    for (const j of boards.jobs || []) jobsById[j.id] = j;
+    const generatedAt = _now();
+
+    if (_writeCapacityView) {
+      try {
+        const cvMarkdown = buildCapacityViewDoc(finalPlan, jobsById, boards.timeOff, {
+          generatedAt, acceptedOverrides: acceptedTuples,
+        });
+        const r = await _writeCapacityView(CAPACITY_VIEW_OBJECT_ID, cvMarkdown, { dryRun: _dryRun });
+        outputs.capacityView = { ok: true, blocksRead: r.blocksRead, blocksDeleted: r.blocksDeleted, blockIdsAdded: (r.blockIdsAdded || []).length, dryRun: r.dryRun, savedMarkdownPath: r.savedMarkdownPath };
+        console.log(`  ✓ Capacity View regenerated (${r.blocksDeleted}/${r.blocksRead} blocks replaced, ${(r.blockIdsAdded || []).length} added${r.dryRun ? ', dry-run' : ''})`);
+      } catch (e) {
+        outputs.capacityView = { ok: false, error: e.message || String(e) };
+        console.log(`  ✗ Capacity View regeneration FAILED: ${e.message || e}`);
+        console.log('    Doc may be mid-replace — recovery artifact at logs/capacity-view-<date>.md; re-run `node scripts/write-capacity-view.js` or use the capacity-view-refresh skill.');
+      }
+    } else {
+      console.log('  Capacity View writer not wired — skipped.');
+    }
+
+    if (_writeWeeklyBriefing) {
+      try {
+        const briefing = buildWeeklyBriefingDoc(finalPlan, jobsById, boards.timeOff, {
+          generatedAt, acceptedOverrides: acceptedTuples,
+        });
+        const r = await _writeWeeklyBriefing({ title: briefing.title, markdown: briefing.markdown }, { dryRun: _dryRun });
+        outputs.weeklyBriefing = { ok: true, weekISO: briefing.weekISO, created: !!r.created, renamed: !!r.renamed, wouldCreate: !!r.wouldCreate, blockIdsAdded: (r.blockIdsAdded || []).length, dryRun: r.dryRun, savedMarkdownPath: r.savedMarkdownPath };
+        console.log(`  ✓ Weekly Briefing for week ${briefing.weekISO}${r.wouldCreate ? ' (would create doc — dry-run)' : r.created ? ' (doc created)' : ''}${r.dryRun ? ' (dry-run)' : ''}`);
+      } catch (e) {
+        outputs.weeklyBriefing = { ok: false, error: e.message || String(e) };
+        console.log(`  ✗ Weekly Briefing regeneration FAILED: ${e.message || e}`);
+        console.log('    Recovery artifact at logs/weekly-briefing-<date>.md; re-run `node scripts/write-weekly-briefing.js`.');
+      }
+    } else {
+      console.log('  Weekly Briefing writer not wired — skipped.');
+    }
+  }
+
+  return { baselinePlan, validation, finalPlan, planFile, validationFile, outputs };
 }
 
 module.exports = { runPlanner };
@@ -191,7 +262,18 @@ if (require.main === module) {
     console.error('ERROR: MONDAY_API_TOKEN env var required');
     process.exit(1);
   }
-  runPlanner({ mode }).catch(e => {
+  // C8: wire the real output writers here (and only here) — runPlanner
+  // skips the outputs stage when these are absent, keeping unit tests
+  // hermetic. See the outputs-stage docstring in runPlanner.
+  const { replaceCapacityViewBody } = require('./write-capacity-view.js');
+  const { writeWeeklyBriefing } = require('./write-weekly-briefing.js');
+  runPlanner({
+    mode,
+    deps: {
+      writeCapacityView: replaceCapacityViewBody,
+      writeWeeklyBriefing,
+    },
+  }).catch(e => {
     console.error(e);
     process.exit(1);
   });
