@@ -227,6 +227,16 @@ Column-edit detection on Applied rows can't be done in the planner (it only sees
 
 Repeat for: **Job**, **Station**, **From Crew**, **From Week**, **To Crew**, **To Week**, **Allow Over-Cap**. (Skip Reason — it's commentary, not plan input.) Until these exist, the planner still re-validates Applied rows every run (Phase 1.1), so an edited Applied row gets re-checked on the next run anyway — the automations just make the Pending flip visible immediately.
 
+### Adversarial review (2026-06-10, 24-agent multi-lens + skeptic verification)
+
+10 raw findings → 6 confirmed (3 distinct root causes, all fixed same session), 4 refuted:
+
+1. **Fixed (HIGH):** `ensureBriefingDoc` treated ANY resolve error (rate-limit, 5xx, network) as "doc deleted" → would create a duplicate briefing doc and repoint the state file. Now only the deliberate `No doc found for object_id` error falls through to create; transient errors rethrow into the C8 per-writer failure policy.
+2. **Fixed (MEDIUM):** C8 + both writer CLIs passed `loadTimeOff()`'s raw shape (`{ personId, from, to, … }`) to generators expecting `{ crew, week, hours }` — PTO-only crews silently vanished from both docs. New `timeOffEntriesFromPlan(plan)` derives entries from the plan's `capacityGrid` `slot.timeOff` (no board-shape knowledge needed); all three call sites switched.
+3. **Fixed (LOW):** the CV writer saved its W2 recovery artifact only after the doc reads succeeded, so a read-phase failure left no artifact while the failure message pointed at one. Save-first ordering now (matches the briefing writer); run-planner's failure message reworded to be accurate in all cases.
+
+Refuted (correctly): briefingWeekFor's Mon–Fri current-week semantics (documented decision §H.5), rename-before-replace ordering (D2 single-doc model), board-override cells carrying both 🔧 and *(pinned)* (board rows become forceAssignments — Test 16 anchors the coexistence), and "Section D steps not performed" (live dry-run done; smoke matrix is operator-gated, see below).
+
 ### Known cosmetic items (deferred)
 
 - Plan/validation filenames use the UTC date; markdown artifacts use the local date. Around midnight UTC they differ by a day (`rebalance-plan-2026-06-11.json` vs `capacity-view-2026-06-10.md`). Pairing logic is internally consistent (both files the CLI pairs use UTC). Phase 5 polish.

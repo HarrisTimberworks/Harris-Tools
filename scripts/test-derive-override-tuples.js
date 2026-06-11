@@ -43,6 +43,7 @@
 const {
   deriveAcceptedOverrideTuples,
   tuplesFromPersistedValidation,
+  timeOffEntriesFromPlan,
   buildWeekSection,
   buildPriorityOrder,
 } = require('./capacity-view-generator.js');
@@ -314,6 +315,48 @@ function acceptedRow(overrides = {}) {
     check('Hrs cell shows 🔧 prefix AND *(pinned)* suffix',
       /🔧 8 \*\(pinned\)\*/.test(out),
       out.split('\n').filter(l => l.includes('Job A')).join(' // '));
+  }
+
+  console.log('\nTest 17: REVIEW FIX — timeOffEntriesFromPlan derives {crew, week, hours} from capacityGrid');
+  {
+    // Adversarial-review finding (2026-06-10, MEDIUM): C8 + the writer CLIs
+    // passed loadTimeOff()'s raw shape ({ personId, from, to, hours }) to the
+    // generators, whose buildCrewTable expects { crew, week, hours } — so
+    // PTO-only crews silently vanished from both generated docs. The plan
+    // JSON's capacityGrid already serializes slot.timeOff per crew × week
+    // (rebalance-schedule.js grid output: { avail, committed, timeOff, over,
+    // assignments }); deriving from it needs no Time Off board knowledge.
+    check('timeOffEntriesFromPlan is a function', typeof timeOffEntriesFromPlan === 'function', `typeof=${typeof timeOffEntriesFromPlan}`);
+    const plan = {
+      capacityGrid: {
+        Ian: { '2026-06-15': { avail: 32, committed: 0, timeOff: 8 },
+               '2026-06-22': { avail: 40, committed: 10, timeOff: 0 } },
+        Ken: { '2026-06-15': { avail: 40, committed: 12, timeOff: 0 } },
+        Bob: { '2026-06-15': { avail: 0, committed: 0, timeOff: 40 } },
+      },
+    };
+    const entries = timeOffEntriesFromPlan(plan);
+    check('two entries (timeOff > 0 only)', entries.length === 2, JSON.stringify(entries));
+    const ian = entries.find(e => e.crew === 'Ian');
+    const bob = entries.find(e => e.crew === 'Bob');
+    check('Ian 2026-06-15 8h', ian?.week === '2026-06-15' && ian?.hours === 8, JSON.stringify(ian));
+    check('Bob 2026-06-15 40h', bob?.week === '2026-06-15' && bob?.hours === 40, JSON.stringify(bob));
+    check('missing grid → []', timeOffEntriesFromPlan({}).length === 0 && timeOffEntriesFromPlan(undefined).length === 0, '');
+  }
+
+  console.log('\nTest 18: REVIEW FIX — derived entries render the PTO row through buildWeekSection');
+  {
+    const plan = {
+      placements: [placement({ crew: 'Ken', week: '2026-06-15', hours: 12 })],
+      capacityGrid: {
+        Ken: { '2026-06-15': { avail: 40, committed: 12, timeOff: 0 } },
+        Ian: { '2026-06-15': { avail: 32, committed: 0, timeOff: 8 } },
+      },
+    };
+    const jobsById = { 'PL-A': { name: 'Job A', delivery: '2026-06-19' } };
+    const out = buildWeekSection('2026-06-15', plan, jobsById, timeOffEntriesFromPlan(plan), {});
+    check('PTO-only Ian row renders', /\| Ian \| PTO \(8h\) \| — \| — \| — \|/.test(out),
+      out.split('\n').filter(l => l.startsWith('|')).join(' // '));
   }
 
   console.log();

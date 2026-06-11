@@ -89,7 +89,15 @@ async function ensureBriefingDoc({
       const docId = await getDocIdByObjectId(state.objectId, { gqlFn });
       return { docId, objectId: state.objectId, created: false };
     } catch (e) {
-      logger.log(`  Briefing doc object_id ${state.objectId} no longer resolves (${e.message}) — will create fresh.`);
+      // REVIEW FIX (2026-06-10): only the deliberate "doc genuinely absent"
+      // signal may fall through to create-fresh. getDocIdByObjectId throws
+      // 'No doc found for object_id …' when the query SUCCEEDS with zero
+      // docs; every other throw (rate-limit/complexity GraphQL errors, 5xx,
+      // network) is transient — rethrowing lets run-planner's per-writer
+      // failure policy surface it instead of silently creating a duplicate
+      // doc and repointing the state file at it.
+      if (!/^No doc found for object_id/.test(e.message || '')) throw e;
+      logger.log(`  Briefing doc object_id ${state.objectId} no longer exists (${e.message}) — will create fresh.`);
     }
   }
 
@@ -245,7 +253,7 @@ if (require.main === module) {
   (async () => {
     const dryRun = process.env.DRY_RUN === '1';
     const reb = require('./rebalance-schedule.js');
-    const { tuplesFromPersistedValidation } = require('./capacity-view-generator.js');
+    const { tuplesFromPersistedValidation, timeOffEntriesFromPlan } = require('./capacity-view-generator.js');
     const { buildWeeklyBriefingDoc } = require('./weekly-briefing-generator.js');
 
     const logsDir = path.join(__dirname, '..', 'logs');
@@ -263,12 +271,14 @@ if (require.main === module) {
       console.log(`Loaded ${acceptedOverrides.length} accepted-override tuple(s) for 🔧 indicator.`);
     }
 
-    console.log('Fetching jobs + timeOff from monday for markdown generation...');
+    console.log('Fetching jobs from monday for markdown generation...');
     const boards = await reb.loadAll();
     const jobsById = {};
     for (const j of boards.jobs) jobsById[j.id] = j;
 
-    const briefing = buildWeeklyBriefingDoc(plan, jobsById, boards.timeOff, { acceptedOverrides });
+    // PTO rows derive from the plan's capacityGrid — boards.timeOff carries
+    // the raw Time Off board shape (no crew/week fields) and renders nothing.
+    const briefing = buildWeeklyBriefingDoc(plan, jobsById, timeOffEntriesFromPlan(plan), { acceptedOverrides });
     console.log(`Briefing week ${briefing.weekISO}: ${briefing.markdown.length} bytes of markdown.\n`);
 
     try {

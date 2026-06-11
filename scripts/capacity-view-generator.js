@@ -597,6 +597,25 @@ function deriveAcceptedOverrideTuples(accepted, baselinePlan, finalPlan) {
   return tuples;
 }
 
+// REVIEW FIX (2026-06-10) — derive { crew, week, hours } PTO entries from a
+// plan's serialized capacityGrid (slot shape: { avail, committed, timeOff,
+// over, assignments }). The raw Time Off board shape from loadTimeOff()
+// ({ personId, from, to, … }) has no crew/week fields and silently renders
+// nothing in buildCrewTable; the grid already carries per-crew-week PTO
+// hours, so deriving here needs no board-shape knowledge. Used by the C8
+// outputs stage and both writer CLIs.
+function timeOffEntriesFromPlan(plan) {
+  const entries = [];
+  const grid = (plan && plan.capacityGrid) || {};
+  for (const crew of Object.keys(grid)) {
+    for (const week of Object.keys(grid[crew] || {})) {
+      const hours = Number(grid[crew][week]?.timeOff || 0);
+      if (hours > 0) entries.push({ crew, week, hours });
+    }
+  }
+  return entries;
+}
+
 // For callers that read a persisted override-validation JSON instead of
 // holding both plans in memory (the write-capacity-view.js CLI). Prefer the
 // acceptedTuples array persisted by run-planner.js (C8 — full semantics
@@ -618,6 +637,7 @@ module.exports = {
   buildCapacityViewDoc,
   deriveAcceptedOverrideTuples,
   tuplesFromPersistedValidation,
+  timeOffEntriesFromPlan,
   // Exposed for C3 / C6 reuse without re-implementing.
   STATION_ABBR,
   SOFT_CAP_MULTIPLIER,

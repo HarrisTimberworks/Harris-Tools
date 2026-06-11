@@ -324,6 +324,43 @@ const STATE = JSON.stringify({ objectId: '18418888888', docId: '88001', url: 'ht
     check('fallback message mentions saved artifact path', logLines.some(l => /weekly-briefing-2026-06-13\.md/.test(l)), JSON.stringify(logLines.slice(-4)));
   }
 
+  console.log('\nTest 16: REVIEW FIX — transient resolve error RETHROWS (no duplicate create, state untouched)');
+  {
+    // Adversarial-review finding (2026-06-10, HIGH): the resolve catch-all
+    // treated rate-limits / 5xx / network errors as "doc deleted" and created
+    // a duplicate doc + repointed state. Only the deliberate
+    // 'No doc found for object_id' error may fall through to create.
+    const f = makeFakeFs({ '/fake/state.json': STATE });
+    const calls = [];
+    const transientGql = async (q, v) => {
+      calls.push({ q });
+      if (/docs\s*\(/.test(q)) throw new Error('GraphQL error: [{"message":"Complexity budget exhausted"}]');
+      return makeFakeGql()(q, v);
+    };
+    let threw = null;
+    try {
+      await ensureBriefingDoc({ gqlFn: transientGql, fsImpl: f.fs, stateFile: '/fake/state.json', title: 'T', logger: silentLogger });
+    } catch (e) {
+      threw = e;
+    }
+    check('rethrows the transient error', threw !== null && /Complexity budget/.test(threw.message), String(threw && threw.message));
+    check('no create_doc fired', !calls.some(c => /create_doc/.test(c.q)), JSON.stringify(calls.map(c => c.q.slice(0, 40))));
+    check('state file untouched', f.writes.length === 0, JSON.stringify(f.writes.map(w => w.path)));
+  }
+
+  console.log('\nTest 17: REVIEW FIX — the deliberate no-doc-found error still falls through to create');
+  {
+    // Companion to Test 16: getDocIdByObjectId's specific 'No doc found for
+    // object_id' (thrown when the query SUCCEEDS with zero docs) must keep
+    // taking the create-fresh path. Already covered by Test 5 via
+    // makeFakeGql({ docExists: false }); re-asserted here so the pair of
+    // behaviors reads side-by-side.
+    const f = makeFakeFs({ '/fake/state.json': STATE });
+    const gql = makeFakeGql({ docExists: false });
+    const r = await ensureBriefingDoc({ gqlFn: gql, fsImpl: f.fs, stateFile: '/fake/state.json', title: 'T', logger: silentLogger });
+    check('created fresh on genuine no-doc-found', r.created === true && r.docId === '99001', JSON.stringify(r));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

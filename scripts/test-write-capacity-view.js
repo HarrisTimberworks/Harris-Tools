@@ -647,6 +647,36 @@ function makeFakeFs() {
     check('no chunk is empty', chunks.every(c => c.trim().length > 0), JSON.stringify(chunks.map(c => c.length)));
   }
 
+  console.log('\nTest 35: REVIEW FIX — W2 artifact saved BEFORE any API call (save-first ordering)');
+  {
+    // Adversarial-review finding (2026-06-10, LOW): the artifact used to be
+    // saved only after getDocIdByObjectId + getAllBlockIds succeeded, so a
+    // read-phase failure left no artifact while run-planner's failure message
+    // pointed operators at one. Save-first (the briefing writer's ordering)
+    // makes the recovery message universally true.
+    const writes = [];
+    const fakeFs = {
+      existsSync: () => true,
+      mkdirSync: () => {},
+      writeFileSync: (p, c) => writes.push(String(p)),
+    };
+    const failingGql = async () => { throw new Error('synthetic resolve failure'); };
+    let threw = false;
+    try {
+      await replaceCapacityViewBody(18410103423, '# md\n', {
+        gqlFn: failingGql, fs: fakeFs, logsDir: '/fake/logs',
+        sleepFn: async () => {}, now: () => new Date(2026, 5, 13, 18, 0, 0),
+        logger: { log: () => {} },
+      });
+    } catch (e) {
+      threw = true;
+    }
+    check('throws on resolve failure', threw, '');
+    check('artifact was saved before the failing API call',
+      writes.some(p => /capacity-view-2026-06-13\.md$/.test(p)),
+      JSON.stringify(writes));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

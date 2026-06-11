@@ -301,15 +301,18 @@ async function replaceCapacityViewBody(objectId, newMarkdown, opts = {}) {
 
   _logger.log('=== Capacity View regeneration ===');
   if (dryRun) _logger.log('DRY RUN MODE — no mutations will fire.');
-  _logger.log('Reading current doc state...');
 
+  // W2 recovery artifact — saved BEFORE any API call (REVIEW FIX 2026-06-10:
+  // previously saved after the doc reads, so a read-phase failure left no
+  // artifact while failure messages pointed operators at one; the briefing
+  // writer's save-first ordering is now the shared convention).
+  const savedMarkdownPath = saveMarkdownToDisk(newMarkdown, { fsImpl: _fs, logsDir: _logsDir, now: _now });
+  _logger.log(`Saved markdown artifact: ${savedMarkdownPath}`);
+
+  _logger.log('Reading current doc state...');
   const docId = await getDocIdByObjectId(objectId, { gqlFn: _gqlFn });
   const blockIds = await getAllBlockIds(docId, { gqlFn: _gqlFn });
   _logger.log(`Found ${blockIds.length} blocks in doc ${docId} (object_id ${objectId}).`);
-
-  // W2 recovery artifact — saved BEFORE delete fires, regardless of dryRun.
-  const savedMarkdownPath = saveMarkdownToDisk(newMarkdown, { fsImpl: _fs, logsDir: _logsDir, now: _now });
-  _logger.log(`Saved markdown artifact: ${savedMarkdownPath}`);
 
   if (dryRun) {
     _logger.log(`Would delete ${blockIds.length} blocks, then add ${newMarkdown.split('\n').length} lines of markdown (${newMarkdown.length} bytes).`);
@@ -398,7 +401,7 @@ if (require.main === module) {
   (async () => {
     const dryRun = process.env.DRY_RUN === '1';
     const reb = require('./rebalance-schedule.js');
-    const { buildCapacityViewDoc, tuplesFromPersistedValidation } = require('./capacity-view-generator.js');
+    const { buildCapacityViewDoc, tuplesFromPersistedValidation, timeOffEntriesFromPlan } = require('./capacity-view-generator.js');
 
     const logsDir = path.join(__dirname, '..', 'logs');
     const latest = reb.findLatestPlanFile(logsDir);
@@ -424,12 +427,14 @@ if (require.main === module) {
       console.log(`Loaded ${acceptedOverrides.length} accepted-override tuple(s) for 🔧 indicator.`);
     }
 
-    console.log('Fetching jobs + timeOff from monday for markdown generation...');
+    console.log('Fetching jobs from monday for markdown generation...');
     const boards = await reb.loadAll();
     const jobsById = {};
     for (const j of boards.jobs) jobsById[j.id] = j;
 
-    const markdown = buildCapacityViewDoc(plan, jobsById, boards.timeOff, {
+    // PTO rows derive from the plan's capacityGrid — boards.timeOff carries
+    // the raw Time Off board shape (no crew/week fields) and renders nothing.
+    const markdown = buildCapacityViewDoc(plan, jobsById, timeOffEntriesFromPlan(plan), {
       generatedAt: new Date(),
       acceptedOverrides,
     });

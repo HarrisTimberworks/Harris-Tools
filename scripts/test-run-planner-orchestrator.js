@@ -590,7 +590,12 @@ function makeFakeBoards() {
 
   function makeOutputBoards() {
     const boards = makeFakeBoards();
-    boards.timeOff = [];
+    // Real loadTimeOff shape — NO crew/week fields. If the outputs stage
+    // passes this straight to the generators (the reviewed bug), the PTO
+    // row assertion in Test 13 fails because this shape never matches.
+    boards.timeOff = [
+      { id: 'TO-1', name: 'Ken', personId: 'U-KEN', from: '2026-05-18', to: '2026-05-18', type: 'PTO', status: 'Approved', hours: 8 },
+    ];
     return boards;
   }
 
@@ -600,7 +605,16 @@ function makeFakeBoards() {
     const finalReport = {
       mode: 'plan',
       placements: [{ crew: 'Ian', week: '2026-05-25', jobId: 'PL-A', jobName: 'Job A', masterPmId: 'MPM-A', station: 'Benchwork', hours: 8, forced: true }],
-      capacityGrid: { Ian: { '2026-05-25': { committed: 8, avail: 40 } } },
+      capacityGrid: {
+        Ian: { '2026-05-25': { committed: 8, avail: 40, timeOff: 0 } },
+        // PTO-only crew: zero placements, timeOff in the serialized grid.
+        // REVIEW FIX (2026-06-10): the outputs stage must derive PTO rows
+        // from the plan's capacityGrid (timeOffEntriesFromPlan), NOT from
+        // boards.timeOff (raw loadTimeOff shape has no crew/week fields).
+        // Week 2026-05-18 = both the CV window start AND briefingWeekFor's
+        // target for the fixture's Friday 2026-05-22 now().
+        Ken: { '2026-05-18': { committed: 0, avail: 32, timeOff: 8 } },
+      },
       warnings: [],
     };
     let pass = 0;
@@ -674,6 +688,12 @@ function makeFakeBoards() {
       /\*\*Generated:\*\*/.test(cv?.markdown || '') && /## Legend/.test(cv?.markdown || ''), (cv?.markdown || '').slice(0, 150));
     check('CV markdown carries 🔧 on the overridden cell',
       /🔧 8/.test(cv?.markdown || ''), (cv?.markdown || '').split('\n').filter(l => l.includes('Ian')).join(' // '));
+    check('CV markdown renders the PTO-only crew row (plan-derived timeOff, not raw board shape)',
+      /\| Ken \| PTO \(8h\) \| — \| — \| — \|/.test(cv?.markdown || ''),
+      (cv?.markdown || '').split('\n').filter(l => l.includes('Ken')).join(' // ') || '(no Ken rows)');
+    check('briefing markdown also renders the PTO-only crew row',
+      /\| Ken \| PTO \(8h\) \| — \| — \| — \|/.test(wb?.briefing?.markdown || ''),
+      (wb?.briefing?.markdown || '').split('\n').filter(l => l.includes('Ken')).join(' // ') || '(no Ken rows)');
     check('briefing writer received { title, markdown }',
       typeof wb?.briefing?.title === 'string' && /HTW Weekly Briefing — Week of \d{4}-\d{2}-\d{2}/.test(wb.briefing.title) && typeof wb?.briefing?.markdown === 'string',
       JSON.stringify(wb?.briefing?.title));

@@ -45,7 +45,7 @@ const path = require('path');
 const reb = require('./rebalance-schedule.js');
 const { validateAll: realValidateAll } = require('./validate-overrides.js');
 const { writeRowDecisions: realWriteRowDecisions } = require('./writeback-overrides.js');
-const { buildCapacityViewDoc, deriveAcceptedOverrideTuples } = require('./capacity-view-generator.js');
+const { buildCapacityViewDoc, deriveAcceptedOverrideTuples, timeOffEntriesFromPlan } = require('./capacity-view-generator.js');
 const { buildWeeklyBriefingDoc } = require('./weekly-briefing-generator.js');
 const { CAPACITY_VIEW_OBJECT_ID } = require('./write-capacity-view.js');
 
@@ -208,10 +208,14 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
     const jobsById = {};
     for (const j of boards.jobs || []) jobsById[j.id] = j;
     const generatedAt = _now();
+    // REVIEW FIX (2026-06-10): PTO rows derive from the plan's capacityGrid,
+    // NOT boards.timeOff — the raw loadTimeOff shape has no crew/week fields
+    // and renders nothing (see timeOffEntriesFromPlan docstring).
+    const timeOffEntries = timeOffEntriesFromPlan(finalPlan);
 
     if (_writeCapacityView) {
       try {
-        const cvMarkdown = buildCapacityViewDoc(finalPlan, jobsById, boards.timeOff, {
+        const cvMarkdown = buildCapacityViewDoc(finalPlan, jobsById, timeOffEntries, {
           generatedAt, acceptedOverrides: acceptedTuples,
         });
         const r = await _writeCapacityView(CAPACITY_VIEW_OBJECT_ID, cvMarkdown, { dryRun: _dryRun });
@@ -220,7 +224,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
       } catch (e) {
         outputs.capacityView = { ok: false, error: e.message || String(e) };
         console.log(`  ✗ Capacity View regeneration FAILED: ${e.message || e}`);
-        console.log('    Doc may be mid-replace — recovery artifact at logs/capacity-view-<date>.md; re-run `node scripts/write-capacity-view.js` or use the capacity-view-refresh skill.');
+        console.log('    The writer saves logs/capacity-view-<date>.md before any mutation — if deletes already fired, recover from that artifact (or the capacity-view-refresh skill); a failure before the writer ran leaves the doc untouched. Re-run: `node scripts/write-capacity-view.js`.');
       }
     } else {
       console.log('  Capacity View writer not wired — skipped.');
@@ -228,7 +232,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
 
     if (_writeWeeklyBriefing) {
       try {
-        const briefing = buildWeeklyBriefingDoc(finalPlan, jobsById, boards.timeOff, {
+        const briefing = buildWeeklyBriefingDoc(finalPlan, jobsById, timeOffEntries, {
           generatedAt, acceptedOverrides: acceptedTuples,
         });
         const r = await _writeWeeklyBriefing({ title: briefing.title, markdown: briefing.markdown }, { dryRun: _dryRun });
