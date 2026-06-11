@@ -255,7 +255,8 @@ async function addMarkdownToDocChunked(docId, markdown, opts = {}) {
   return { blockIds, chunkCount: chunks.length };
 }
 
-// Saves the C3-generated markdown to logs/capacity-view-<date>.md.
+// Saves generated markdown to logs/<filePrefix>-<date>.md (default prefix
+// capacity-view; C7's briefing writer passes 'weekly-briefing').
 // E1: this fires under dryRun too — operators can inspect what WOULD be
 // written before triggering the live run. Latest-wins overwrite is
 // deliberate (E2).
@@ -264,6 +265,7 @@ function saveMarkdownToDisk(markdown, opts = {}) {
     fsImpl = fs,
     logsDir = path.join(__dirname, '..', 'logs'),
     now = () => new Date(),
+    filePrefix = 'capacity-view',
   } = opts;
 
   if (!fsImpl.existsSync(logsDir)) {
@@ -271,7 +273,7 @@ function saveMarkdownToDisk(markdown, opts = {}) {
   }
   const d = now();
   const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const file = path.join(logsDir, `capacity-view-${dateStr}.md`);
+  const file = path.join(logsDir, `${filePrefix}-${dateStr}.md`);
   fsImpl.writeFileSync(file, markdown);
   return file;
 }
@@ -367,6 +369,8 @@ module.exports = {
   CAPACITY_VIEW_DOC_URL,
   RATE_LIMIT_MS,
   READ_BATCH_SIZE,
+  // Exposed for sibling writers (C7 write-weekly-briefing.js).
+  defaultGql,
   getDocIdByObjectId,
   getAllBlockIds,
   deleteBlocks,
