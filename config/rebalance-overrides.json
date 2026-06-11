@@ -4,105 +4,240 @@
     "11693156502": {
       "name": "F&B - Westridge Office",
       "note": "Cabs at Clay ready for pickup. Only PostFin 8.6h remains. Target delivery Thu 5/28 (GC TBD).",
-      "remainingHours": { "eng": 0, "panel": 0, "bench": 0, "prefin": 0, "postfin": 8.6 },
-      "customWindow": { "postfin": { "start": "2026-05-25", "end": "2026-05-25" } }
+      "remainingHours": {
+        "eng": 0,
+        "panel": 0,
+        "bench": 0,
+        "prefin": 0,
+        "postfin": 8.6
+      },
+      "customWindow": {
+        "postfin": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        }
+      }
     },
     "11693170191": {
       "name": "SH - McMorris",
-      "note": "Eng done, Panel 90%, Bench done, PreFin 35/55 cabs done as of 5/17. Door order placed 5/18 (2-wk lead, arrive 6/01). Delivery pushed 6/19 → 6/26.",
-      "remainingHours": { "eng": 0, "panel": 2.4, "bench": 0, "prefin": 32.9, "postfin": 37 },
-      "customWindow": {
-        "panel":   { "start": "2026-05-25", "end": "2026-05-25" },
-        "prefin":  { "start": "2026-05-18", "end": "2026-06-04" },
-        "postfin": { "start": "2026-06-22", "end": "2026-06-26" }
+      "note": "Eng done, Panel 90%, Bench done, PreFin 35/55 cabs done as of 5/17. Door order placed 5/18 (2-wk lead, arrive 6/01). Delivery pushed 6/19 → 6/26. | 2026-06-11: delivery moved to 7/20 (Ian departed); stale customWindows removed.",
+      "remainingHours": {
+        "eng": 0,
+        "panel": 2.4,
+        "bench": 0,
+        "prefin": 32.9,
+        "postfin": 37
       }
     },
     "11693176301": {
       "name": "MAP - Edge Optics",
       "note": "Closes Mon 5/18: Bob 8h + Jonathan 8h Bench. All other stations done.",
-      "remainingHours": { "eng": 0, "panel": 0, "bench": 16, "prefin": 0, "postfin": 0 },
-      "customWindow": { "bench": { "start": "2026-05-18", "end": "2026-05-18" } }
+      "remainingHours": {
+        "eng": 0,
+        "panel": 0,
+        "bench": 16,
+        "prefin": 0,
+        "postfin": 0
+      },
+      "customWindow": {
+        "bench": {
+          "start": "2026-05-18",
+          "end": "2026-05-18"
+        }
+      }
     },
     "11693198809": {
       "name": "NC - Cator Ruma",
       "note": "Countertop-only, 80% edgebanding. Delivery firm at 4/29 (Wed of week 4/27). Ian 8hr Fri 4/24 head-start + Ken CNC week 4/27 + 32hr edgebanding subcontractor week 4/27 + Jonathan weekend 16hr on 4/25-26 + Bob subcontract Mon-Wed 4/27. Tight week but required.",
-      "remainingHours": { "eng": 0, "panel": 40, "bench": 0, "prefin": 0, "postfin": 0 },
-      "customWindow": { "panel": { "start": "2026-04-20", "end": "2026-05-01" } }
+      "remainingHours": {
+        "eng": 0,
+        "panel": 40,
+        "bench": 0,
+        "prefin": 0,
+        "postfin": 0
+      },
+      "customWindow": {
+        "panel": {
+          "start": "2026-04-20",
+          "end": "2026-05-01"
+        }
+      }
     },
     "11693164385": {
       "name": "MAG - SciTech",
       "note": "Cabs done + at jobsite. Countertop production wk 5/25 (Ken 6h + Bob 3h Panel, Spencer 2.3h backsplash bench). Install Tue 6/02 — operational, not in PLB.",
-      "remainingHours": { "eng": 0, "panel": 9, "bench": 2.3, "prefin": 0, "postfin": 0 },
+      "remainingHours": {
+        "eng": 0,
+        "panel": 9,
+        "bench": 2.3,
+        "prefin": 0,
+        "postfin": 0
+      },
       "customWindow": {
-        "panel": { "start": "2026-05-25", "end": "2026-05-25" },
-        "bench": { "start": "2026-05-25", "end": "2026-05-25" }
+        "panel": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        },
+        "bench": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        }
       }
     },
     "11693186870": {
       "name": "MAG - Roster 5 — Frameless (P1)",
       "note": "pLam, no finish. Eng done. Panel Ken wk 5/18 (with BCH = 41.9h, ~2h OT). PostFin Bob primary + sub fallback (Ian PTO 5/25-5/29).",
-      "remainingHours": { "eng": 0, "panel": 33.9, "bench": 0, "prefin": 0, "postfin": 40 },
+      "remainingHours": {
+        "eng": 0,
+        "panel": 33.9,
+        "bench": 0,
+        "prefin": 0,
+        "postfin": 40
+      },
       "customWindow": {
-        "panel":   { "start": "2026-05-18", "end": "2026-05-22" },
-        "postfin": { "start": "2026-05-18", "end": "2026-05-29" }
+        "panel": {
+          "start": "2026-05-18",
+          "end": "2026-05-22"
+        },
+        "postfin": {
+          "start": "2026-05-18",
+          "end": "2026-05-29"
+        }
       }
     },
     "11693187209": {
       "name": "Gilbert - Dining Room & Range Hood",
       "note": "Already at Clay finish. Pickup Mon-Tue wk 5/18. Paisios 2h PostFin + delivers Fri 5/22.",
-      "remainingHours": { "eng": 0, "panel": 0, "bench": 0, "prefin": 0, "postfin": 2 },
-      "customWindow": { "postfin": { "start": "2026-05-18", "end": "2026-05-22" } }
+      "remainingHours": {
+        "eng": 0,
+        "panel": 0,
+        "bench": 0,
+        "prefin": 0,
+        "postfin": 2
+      },
+      "customWindow": {
+        "postfin": {
+          "start": "2026-05-18",
+          "end": "2026-05-22"
+        }
+      }
     },
     "11693164567": {
       "name": "Liz Stapp - Laundry Room",
       "note": "Delivery pushed 6/03 → 6/05 to drop with Quince Fri 5/29. Eng Chris (3h). Delivery pushed 6/05 → 6/08 (Mon) to align with planner cascade math; drops with SHI Mon 6/01.",
-      "remainingHours": { "eng": 3, "panel": 2.8, "bench": 1.5, "prefin": 5.5, "postfin": 2.3 },
+      "remainingHours": {
+        "eng": 3,
+        "panel": 2.8,
+        "bench": 1.5,
+        "prefin": 5.5,
+        "postfin": 2.3
+      },
       "customWindow": {
-        "eng":     { "start": "2026-05-18", "end": "2026-05-22" },
-        "panel":   { "start": "2026-05-25", "end": "2026-05-25" },
-        "bench":   { "start": "2026-05-25", "end": "2026-05-25" },
-        "prefin":  { "start": "2026-05-25", "end": "2026-05-25" },
-        "postfin": { "start": "2026-06-08", "end": "2026-06-08" }
+        "eng": {
+          "start": "2026-05-18",
+          "end": "2026-05-22"
+        },
+        "panel": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        },
+        "bench": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        },
+        "prefin": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        },
+        "postfin": {
+          "start": "2026-06-08",
+          "end": "2026-06-08"
+        }
       }
     },
     "11693166446": {
       "name": "SHI - Huntington Hills",
       "note": "Eng done. Sequenced first Tue 5/26 (Ken Panel → Spencer Bench/PreFin) to drop Wed 5/27. Delivery stays 6/03. Delivery pushed 6/03 → 6/08 (Mon) to align with planner cascade math; drops with Liz Stapp Mon 6/01.",
-      "remainingHours": { "eng": 0, "panel": 1.6, "bench": 0.2, "prefin": 3.2, "postfin": 1 },
+      "remainingHours": {
+        "eng": 0,
+        "panel": 1.6,
+        "bench": 0.2,
+        "prefin": 3.2,
+        "postfin": 1
+      },
       "customWindow": {
-        "panel":   { "start": "2026-05-25", "end": "2026-05-25" },
-        "bench":   { "start": "2026-05-25", "end": "2026-05-25" },
-        "prefin":  { "start": "2026-05-25", "end": "2026-05-25" },
-        "postfin": { "start": "2026-06-08", "end": "2026-06-08" }
+        "panel": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        },
+        "bench": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        },
+        "prefin": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        },
+        "postfin": {
+          "start": "2026-06-08",
+          "end": "2026-06-08"
+        }
       }
     },
     "11693177783": {
       "name": "F&B - Quince Ave",
       "note": "Delivery pushed 5/29 → 6/12. Eng 2h Chris (matrix primary). All other stations untouched. Production wk 5/25, drop Fri 5/29 with Liz Stapp.",
-      "remainingHours": { "eng": 2, "panel": 8.2, "bench": 7, "prefin": 12, "postfin": 6.2 },
+      "remainingHours": {
+        "eng": 2,
+        "panel": 8.2,
+        "bench": 7,
+        "prefin": 12,
+        "postfin": 6.2
+      },
       "customWindow": {
-        "eng":     { "start": "2026-05-18", "end": "2026-05-18" },
-        "panel":   { "start": "2026-05-25", "end": "2026-05-25" },
-        "bench":   { "start": "2026-05-25", "end": "2026-05-25" },
-        "prefin":  { "start": "2026-05-25", "end": "2026-05-25" },
-        "postfin": { "start": "2026-06-08", "end": "2026-06-08" }
+        "eng": {
+          "start": "2026-05-18",
+          "end": "2026-05-18"
+        },
+        "panel": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        },
+        "bench": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        },
+        "prefin": {
+          "start": "2026-05-25",
+          "end": "2026-05-25"
+        },
+        "postfin": {
+          "start": "2026-06-08",
+          "end": "2026-06-08"
+        }
       }
     },
     "11693166564": {
       "name": "MAG - BCH",
-      "note": "Eng done. Split delivery: 5/20 non-CU (Panel 8 + PreFin 2 + PostFin 10.4) + 5/27 CU (Bench 36 + 3-day finish). Master PM date 5/27 (final). 5/20 partial is operational pull from completed sub-stations.",
-      "remainingHours": { "eng": 0, "panel": 8, "bench": 36, "prefin": 2, "postfin": 10.4 },
-      "customWindow": {
-        "panel":   { "start": "2026-05-18", "end": "2026-05-18" },
-        "prefin":  { "start": "2026-05-18", "end": "2026-05-18" },
-        "postfin": { "start": "2026-05-18", "end": "2026-05-18" },
-        "bench":   { "start": "2026-05-18", "end": "2026-05-18" }
+      "note": "2026-06-11: reactivated with remaining Panel 4h + Bench 40h (Chris). Delivery 6/17 on Master PM. Stale 5/18 customWindows removed — planner recomputes from delivery.",
+      "remainingHours": {
+        "eng": 0,
+        "panel": 4,
+        "bench": 40,
+        "prefin": 0,
+        "postfin": 0
       }
     },
     "11693186985": {
       "name": "MAG - Atom Computing",
       "note": "Eng done. P-Lam Commercial, no finish. 7.6h remaining, plenty of runway (8/08).",
-      "remainingHours": { "eng": 0, "panel": 4, "bench": 0.5, "prefin": 0, "postfin": 3.1 }
+      "remainingHours": {
+        "eng": 0,
+        "panel": 4,
+        "bench": 0.5,
+        "prefin": 0,
+        "postfin": 3.1
+      }
     },
     "11693166519": {
       "name": "VV - Wrangler Way",
@@ -111,60 +246,140 @@
     },
     "11835189937": {
       "name": "MAG - Roster 5 — Custom Units (P2)",
-      "note": "Eng complete (40h done weeks 4/27 + 5/04). PHASE 1 release with full current CU hours (panel 22, bench 126, postfin 16). Massive change orders expected — these numbers will grow. 6/18 placeholder; revise when scope locked.",
-      "remainingHours": { "eng": 0, "panel": 22, "bench": 126, "prefin": 0, "postfin": 16 },
-      "parallelPostFin": true,
-      "customWindow": {
-        "panel":   { "start": "2026-05-25", "end": "2026-06-01" },
-        "bench":   { "start": "2026-06-01", "end": "2026-06-12" },
-        "postfin": { "start": "2026-06-15", "end": "2026-06-19" }
-      }
+      "note": "Eng complete (40h done weeks 4/27 + 5/04). PHASE 1 release with full current CU hours (panel 22, bench 126, postfin 16). Massive change orders expected — these numbers will grow. 6/18 placeholder; revise when scope locked. | 2026-06-11: delivery moved to 7/02 (Ian departed); stale customWindows removed.",
+      "remainingHours": {
+        "eng": 0,
+        "panel": 22,
+        "bench": 126,
+        "prefin": 0,
+        "postfin": 16
+      },
+      "parallelPostFin": true
     }
   },
   "crewCapacityOverrides": {
     "2026-04-27": {
-      "Ian": { "available": 0, "reason": "Field work — warranty/punch 4/27-5/1" },
-      "Paisios": { "available": 0, "reason": "Paternity leave 4/27-5/8" },
-      "Jonathan": { "weekendHours": 16, "reason": "Sat-Sun Cator Ruma edgebanding" }
+      "Ian": {
+        "available": 0,
+        "reason": "Field work — warranty/punch 4/27-5/1"
+      },
+      "Paisios": {
+        "available": 0,
+        "reason": "Paternity leave 4/27-5/8"
+      },
+      "Jonathan": {
+        "weekendHours": 16,
+        "reason": "Sat-Sun Cator Ruma edgebanding"
+      }
     },
     "2026-05-04": {
-      "Paisios": { "available": 0, "reason": "Paternity leave 4/27-5/8" }
+      "Paisios": {
+        "available": 0,
+        "reason": "Paternity leave 4/27-5/8"
+      }
     },
     "2026-05-11": {
-      "Paisios": { "available": 0, "reason": "Paternity leave extended through 5/15" }
+      "Paisios": {
+        "available": 0,
+        "reason": "Paternity leave extended through 5/15"
+      }
     },
     "2026-05-18": {
-      "Paisios": { "available": 20, "reason": "Returns from paternity, half-time" },
-      "Ian":     { "available": 20, "reason": "Pulled in for BCH bench Mon-Tue-Wed AM, rest field work" }
+      "Paisios": {
+        "available": 20,
+        "reason": "Returns from paternity, half-time"
+      },
+      "Ian": {
+        "available": 20,
+        "reason": "Pulled in for BCH bench Mon-Tue-Wed AM, rest field work"
+      }
     },
     "2026-05-25": {
-      "Paisios":  { "available": 32, "reason": "Memorial Day Mon — 4-day week" },
-      "Ian":      { "available": 0,  "reason": "PTO 5/25-5/29" },
-      "Spencer":  { "available": 32, "reason": "Memorial Day Mon" },
-      "Ken":      { "available": 32, "reason": "Memorial Day Mon" },
-      "Bob":      { "available": 32, "reason": "Memorial Day Mon" },
-      "Jonathan": { "available": 32, "reason": "Memorial Day Mon" }
+      "Paisios": {
+        "available": 32,
+        "reason": "Memorial Day Mon — 4-day week"
+      },
+      "Ian": {
+        "available": 0,
+        "reason": "PTO 5/25-5/29"
+      },
+      "Spencer": {
+        "available": 32,
+        "reason": "Memorial Day Mon"
+      },
+      "Ken": {
+        "available": 32,
+        "reason": "Memorial Day Mon"
+      },
+      "Bob": {
+        "available": 32,
+        "reason": "Memorial Day Mon"
+      },
+      "Jonathan": {
+        "available": 32,
+        "reason": "Memorial Day Mon"
+      }
     },
     "2026-06-01": {
-      "Paisios": { "available": 20, "reason": "Back to reduced half-time" }
+      "Paisios": {
+        "available": 20,
+        "reason": "Back to reduced half-time"
+      }
     }
   },
   "subcontractors": {
     "2026-04-27": [
-      { "name": "Bob-subcontract", "hours": 24, "allowedStations": ["Panel Processing", "Benchwork"], "reason": "Bob available Mon-Wed as subcontractor before 5/18 employee start" },
-      { "name": "Edgeband-subcontractor", "hours": 32, "allowedStations": ["Panel Processing"], "assignedJobId": "11693198809", "reason": "Cator Ruma edgebanding specialist" },
-      { "name": "Subcontractor (BOB) — Cator pre-employment", "hours": 24, "allowedStations": ["Panel Processing"], "assignedJobId": "11693198809", "reason": "Friday meeting 2026-04-25: off-board sub assignment for Cator Ruma Panel work on 5/4 (pre-employee, before Bob's 5/18 employee start). Note: likely inert in --plan because Cator Panel is fully allocated in week 4/27 and Cator's customWindow.panel ends 5/01 — kept for ops/payroll bookkeeping." }
+      {
+        "name": "Bob-subcontract",
+        "hours": 24,
+        "allowedStations": [
+          "Panel Processing",
+          "Benchwork"
+        ],
+        "reason": "Bob available Mon-Wed as subcontractor before 5/18 employee start"
+      },
+      {
+        "name": "Edgeband-subcontractor",
+        "hours": 32,
+        "allowedStations": [
+          "Panel Processing"
+        ],
+        "assignedJobId": "11693198809",
+        "reason": "Cator Ruma edgebanding specialist"
+      },
+      {
+        "name": "Subcontractor (BOB) — Cator pre-employment",
+        "hours": 24,
+        "allowedStations": [
+          "Panel Processing"
+        ],
+        "assignedJobId": "11693198809",
+        "reason": "Friday meeting 2026-04-25: off-board sub assignment for Cator Ruma Panel work on 5/4 (pre-employee, before Bob's 5/18 employee start). Note: likely inert in --plan because Cator Panel is fully allocated in week 4/27 and Cator's customWindow.panel ends 5/01 — kept for ops/payroll bookkeeping."
+      }
     ],
     "2026-05-11": [],
     "2026-05-18": [],
     "2026-05-25": [
-      { "name": "R5-P1-PostFin-sub", "hours": 24, "allowedStations": ["Post Fin Cab Assembly"], "assignedJobId": "11693186870", "fallbackOnly": true, "reason": "R5-P1 PostFin overflow — Ian PTO 5/25-5/29, delivery firm 5/27. Offer to Bob first; backup source available." }
+      {
+        "name": "R5-P1-PostFin-sub",
+        "hours": 24,
+        "allowedStations": [
+          "Post Fin Cab Assembly"
+        ],
+        "assignedJobId": "11693186870",
+        "fallbackOnly": true,
+        "reason": "R5-P1 PostFin overflow — Ian PTO 5/25-5/29, delivery firm 5/27. Offer to Bob first; backup source available."
+      }
     ]
   },
-  "skipJobs": ["11693166519"],
+  "skipJobs": [
+    "11693166519"
+  ],
   "crewExclusions": {
     "Paisios": {
-      "excludeJobs": ["11835189937"],
+      "excludeJobs": [
+        "11835189937"
+      ],
       "reason": "CU-specific bench work — keep Paisios off Roster 5 P2"
     }
   },
@@ -172,14 +387,19 @@
     {
       "crew": "Chris",
       "jobId": "11693198809",
-      "stations": ["Pack & Ship", "Delivery"],
+      "stations": [
+        "Pack & Ship",
+        "Delivery"
+      ],
       "week": "2026-04-27",
       "reason": "Chris covers Cator Ruma ship/deliver since Paisios is on paternity leave"
     },
     {
       "crew": "Ian",
       "jobId": "11693198809",
-      "stations": ["Panel Processing"],
+      "stations": [
+        "Panel Processing"
+      ],
       "week": "2026-04-20",
       "hours": 8,
       "reason": "Ian Friday 4/24 head-start on Cator Ruma edgebanding"
@@ -187,7 +407,9 @@
     {
       "crew": "Spencer",
       "jobId": "11693176301",
-      "stations": ["Benchwork"],
+      "stations": [
+        "Benchwork"
+      ],
       "week": "2026-04-27",
       "hours": 24.95,
       "reason": "Friday meeting 2026-04-25: pull Edge Optics Bench forward 3 weeks to load Spencer earlier and free up 5/11"
@@ -195,7 +417,9 @@
     {
       "crew": "Spencer",
       "jobId": "11693176301",
-      "stations": ["Benchwork"],
+      "stations": [
+        "Benchwork"
+      ],
       "week": "2026-05-04",
       "hours": 24.95,
       "reason": "Friday meeting 2026-04-25 follow-up: pin Edge Optics Bench remainder to Spencer 5/4 to keep Ian 5/11 clear (the planner re-routed remainder back to Ian Primary after the move force; this anchors it explicitly)"
@@ -203,7 +427,9 @@
     {
       "crew": "Jonathan",
       "jobId": "11835189937",
-      "stations": ["Engineering"],
+      "stations": [
+        "Engineering"
+      ],
       "week": "2026-04-27",
       "hours": 20,
       "reason": "Friday meeting 2026-04-25: split 40h R5-P2 CU Eng across 4/27 + 5/4 to relieve Jonathan 4/27 cap"
@@ -211,7 +437,9 @@
     {
       "crew": "Jonathan",
       "jobId": "11835189937",
-      "stations": ["Engineering"],
+      "stations": [
+        "Engineering"
+      ],
       "week": "2026-05-04",
       "hours": 20,
       "reason": "Friday meeting 2026-04-25: second half of R5-P2 CU Eng split"
@@ -219,7 +447,9 @@
     {
       "crew": "Jonathan",
       "jobId": "11693166564",
-      "stations": ["Engineering"],
+      "stations": [
+        "Engineering"
+      ],
       "week": "2026-05-04",
       "hours": 6,
       "reason": "Friday meeting 2026-04-25: BCH Eng moves from 4/27 to 5/4 to free Jonathan capacity for R5-P2 CU split"
@@ -227,7 +457,9 @@
     {
       "crew": "Ken",
       "jobId": "11693156502",
-      "stations": ["Panel Processing"],
+      "stations": [
+        "Panel Processing"
+      ],
       "week": "2026-04-27",
       "hours": 8.5,
       "reason": "Friday meeting 2026-04-25: Westridge Panel moves from 4/20 to 4/27 — Ken was overloaded for the 5/1 finish drop"
@@ -235,7 +467,9 @@
     {
       "crew": "Ken",
       "jobId": "11693187209",
-      "stations": ["Panel Processing"],
+      "stations": [
+        "Panel Processing"
+      ],
       "week": "2026-04-27",
       "hours": 3.3,
       "reason": "Friday meeting 2026-04-25: Gilbert Panel moves from 5/4 to 4/27 to relieve Ken 5/4 cap"
@@ -243,7 +477,9 @@
     {
       "crew": "Bob",
       "jobId": "11693176301",
-      "stations": ["Benchwork"],
+      "stations": [
+        "Benchwork"
+      ],
       "week": "2026-05-18",
       "hours": 8,
       "reason": "Edge Optics close-out Mon 5/18 (8h Bob + 8h Jonathan)"
@@ -251,7 +487,9 @@
     {
       "crew": "Jonathan",
       "jobId": "11693176301",
-      "stations": ["Benchwork"],
+      "stations": [
+        "Benchwork"
+      ],
       "week": "2026-05-18",
       "hours": 8,
       "reason": "Edge Optics close-out Mon 5/18 — matrix violation, Jonathan helping Bob"
@@ -259,7 +497,9 @@
     {
       "crew": "Paisios",
       "jobId": "11693187209",
-      "stations": ["Post Fin Cab Assembly"],
+      "stations": [
+        "Post Fin Cab Assembly"
+      ],
       "week": "2026-05-18",
       "hours": 2,
       "reason": "Gilbert PostFin — matrix violation, Paisios delivering Fri 5/22 anyway"
@@ -267,7 +507,9 @@
     {
       "crew": "Bob",
       "jobId": "11693164385",
-      "stations": ["Panel Processing"],
+      "stations": [
+        "Panel Processing"
+      ],
       "week": "2026-05-25",
       "hours": 3,
       "reason": "SciTech countertop CNC — matrix violation, Bob helping Ken with small portion"
@@ -275,7 +517,9 @@
     {
       "crew": "Bob",
       "jobId": "11693156502",
-      "stations": ["Post Fin Cab Assembly"],
+      "stations": [
+        "Post Fin Cab Assembly"
+      ],
       "week": "2026-05-25",
       "hours": 8.6,
       "reason": "Westridge PostFin Thu 5/28 — operational pin"
@@ -283,7 +527,9 @@
     {
       "crew": "Bob",
       "jobId": "11835189937",
-      "stations": ["Benchwork"],
+      "stations": [
+        "Benchwork"
+      ],
       "week": "2026-06-01",
       "hours": 23,
       "reason": "R5-P2 CU bench — Bob routes ahead of Spencer per Chris preference"
@@ -291,7 +537,9 @@
     {
       "crew": "Bob",
       "jobId": "11835189937",
-      "stations": ["Benchwork"],
+      "stations": [
+        "Benchwork"
+      ],
       "week": "2026-06-08",
       "hours": 23,
       "reason": "R5-P2 CU bench — Bob continues, Spencer freed"

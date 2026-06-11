@@ -820,6 +820,31 @@ function syntheticBaselinePlan() {
       JSON.stringify(out4.conflicts.map(c => c.reason)));
   }
 
+  console.log('\nTest 44: DEPARTURE — Ian left 2026-06-11; forces to Ian on/after that week are hard-rule Conflicts');
+  {
+    const plJobs = [
+      { id: 'PL-COM', masterPmId: 'MPM-COM', name: 'Com Job', delivery: '2026-07-02', subtype: 'Commercial' },
+    ];
+    const crewParents = [
+      ...CREW_PARENTS,
+      { parentId: 'CP-IAN-0622', crew: 'Ian', week: '2026-06-22' },
+      { parentId: 'CP-IAN-0601', crew: 'Ian', week: '2026-06-01' },
+    ];
+    const baseline = { mode: 'plan', placements: [], capacityGrid: {} };
+
+    const out1 = validateAll([rawRow({ rowId: 'DEP1', jobMpmId: 'MPM-COM', station: 'Post Fin Cab Assembly',
+      toCrewParentId: 'CP-IAN-0622', toWeek: '2026-06-22' })], baseline, plJobs, crewParents);
+    check('force to Ian post-departure → conflict', out1.conflicts.length === 1 && out1.accepted.length === 0,
+      JSON.stringify({ a: out1.accepted.length, c: out1.conflicts.length }));
+    check('reason says Ian left the team', /left the team/i.test(out1.conflicts[0]?.reason || ''), out1.conflicts[0]?.reason);
+
+    // Pre-departure weeks stay valid (historical re-validation must not break).
+    const out2 = validateAll([rawRow({ rowId: 'DEP2', jobMpmId: 'MPM-COM', station: 'Post Fin Cab Assembly',
+      toCrewParentId: 'CP-IAN-0601', toWeek: '2026-06-01' })], baseline, plJobs, crewParents);
+    check('pre-departure week not hard-rule-blocked', out2.conflicts.every(c => !/left the team/i.test(c.reason || '')),
+      JSON.stringify(out2.conflicts.map(c => c.reason)));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

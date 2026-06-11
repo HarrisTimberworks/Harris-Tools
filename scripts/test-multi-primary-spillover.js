@@ -23,7 +23,17 @@
 const {
   scheduleStation,
   SOFT_CAP_MULTIPLIER,
+  ROUTING,
+  SECONDARY,
 } = require('./rebalance-schedule.js');
+
+// 2026-06-11: Ian departed and no station carries TWO primaries in the live
+// matrix anymore — but the multi-primary split/spillover code path is still
+// live in scheduleStation, and Bug 4 was real. Inject a synthetic dual-
+// primary config so the regression stays covered independent of staffing.
+// The test weeks (2026-05-18) predate Ian's departure hard rule on purpose.
+ROUTING['Commercial']['Post Fin Cab Assembly'] = ['Ian', 'Bob'];
+SECONDARY['Commercial']['Post Fin Cab Assembly'] = [];
 
 let checks = 0;
 const failures = [];

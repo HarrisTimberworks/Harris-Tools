@@ -172,49 +172,54 @@ const SOFT_CAP_MULTIPLIER = 1.05;
 // ROUTING MATRIX — keyed by [Job Subtype][Station] → array of Primary crew
 // ============================================================================
 
+// 2026-06-11 — Ian departed (moved to North Carolina). New chains per Chris:
+//   PostFin: Bob > Paisios > Spencer > Ken(Commercial-only via hard rule)
+//   Bench:   Bob > Spencer > Jonathan
+//   PreFin:  Spencer > Bob
+// Applied uniformly across subtypes.
 const ROUTING = {
   'Res - Face Frame': {
     'Engineering':            ['Chris'],
     'Panel Processing':       ['Ken'],
-    'Benchwork':              ['Spencer'],
+    'Benchwork':              ['Bob'],
     'Pre Fin Cab Assembly':   ['Spencer'],
-    'Post Fin Cab Assembly':  ['Ian', 'Bob'],
+    'Post Fin Cab Assembly':  ['Bob'],
     'Pack & Ship':            ['Paisios'],
     'Delivery':               ['Paisios'],
   },
   'Res - Frameless': {
     'Engineering':            ['Chris'],
     'Panel Processing':       ['Ken'],
-    'Benchwork':              ['Ian'],
-    'Pre Fin Cab Assembly':   ['Ian'],
-    'Post Fin Cab Assembly':  ['Ian', 'Bob'],
+    'Benchwork':              ['Bob'],
+    'Pre Fin Cab Assembly':   ['Spencer'],
+    'Post Fin Cab Assembly':  ['Bob'],
     'Pack & Ship':            ['Paisios'],
     'Delivery':               ['Paisios'],
   },
   'Commercial': {
     'Engineering':            ['Jonathan'],
     'Panel Processing':       ['Ken'],
-    'Benchwork':              ['Ian'],
-    'Pre Fin Cab Assembly':   ['Ian'],
-    'Post Fin Cab Assembly':  ['Ian', 'Bob'],
+    'Benchwork':              ['Bob'],
+    'Pre Fin Cab Assembly':   ['Spencer'],
+    'Post Fin Cab Assembly':  ['Bob'],
     'Pack & Ship':            ['Paisios'],
     'Delivery':               ['Paisios'],
   },
   'Countertop/Surface': {
     'Engineering':            ['Jonathan'],
     'Panel Processing':       ['Ken'],
-    'Benchwork':              ['Ian'],
-    'Pre Fin Cab Assembly':   ['Ian'],
-    'Post Fin Cab Assembly':  ['Ian', 'Bob'],
+    'Benchwork':              ['Bob'],
+    'Pre Fin Cab Assembly':   ['Spencer'],
+    'Post Fin Cab Assembly':  ['Bob'],
     'Pack & Ship':            ['Paisios'],
     'Delivery':               ['Paisios'],
   },
   'Mixed': {
     'Engineering':            ['Chris'],
     'Panel Processing':       ['Ken'],
-    'Benchwork':              ['Spencer'],
+    'Benchwork':              ['Bob'],
     'Pre Fin Cab Assembly':   ['Spencer'],
-    'Post Fin Cab Assembly':  ['Ian', 'Bob'],
+    'Post Fin Cab Assembly':  ['Bob'],
     'Pack & Ship':            ['Paisios'],
     'Delivery':               ['Paisios'],
   },
@@ -227,45 +232,46 @@ const ROUTING = {
 
 const SECONDARY = {
   'Res - Face Frame': {
-    'Benchwork':              ['Ian', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly':   ['Ian', 'Bob', 'Paisios'],  // Ken removed per matrix hard rule
-    'Post Fin Cab Assembly':  ['Spencer', 'Paisios'],
+    'Benchwork':              ['Spencer', 'Jonathan'],
+    'Pre Fin Cab Assembly':   ['Bob'],  // Ken removed per matrix hard rule
+    'Post Fin Cab Assembly':  ['Paisios', 'Spencer'],
     'Engineering':            ['Paisios', 'Jonathan'],
-    'Panel Processing':       ['Bob', 'Ian'],  // Ian emergency only — not CNC-trained
-    'Pack & Ship':            ['Ian', 'Spencer', 'Bob', 'Jonathan'],
-    'Delivery':               ['Ian', 'Spencer', 'Bob', 'Jonathan'],
+    'Panel Processing':       ['Bob'],
+    'Pack & Ship':            ['Spencer', 'Bob', 'Jonathan'],
+    'Delivery':               ['Spencer', 'Bob', 'Jonathan'],
   },
   'Res - Frameless': {
-    'Benchwork':              ['Spencer', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly':   ['Spencer', 'Bob', 'Paisios'],  // Ken removed per matrix hard rule
-    'Post Fin Cab Assembly':  ['Spencer', 'Paisios'],
-    'Panel Processing':       ['Ian', 'Bob'],
+    'Benchwork':              ['Spencer', 'Jonathan'],
+    'Pre Fin Cab Assembly':   ['Bob'],  // Ken removed per matrix hard rule
+    'Post Fin Cab Assembly':  ['Paisios', 'Spencer'],
+    'Panel Processing':       ['Bob'],
     'Engineering':            ['Paisios', 'Jonathan', 'Rob'],  // Rob = fill-only tertiary per doc §7 priority ladder
-    'Pack & Ship':            ['Ian', 'Spencer', 'Bob', 'Jonathan'],
-    'Delivery':               ['Ian', 'Spencer', 'Bob', 'Jonathan'],
+    'Pack & Ship':            ['Spencer', 'Bob', 'Jonathan'],
+    'Delivery':               ['Spencer', 'Bob', 'Jonathan'],
   },
   'Commercial': {
-    'Benchwork':              ['Spencer', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly':   ['Spencer', 'Bob', 'Paisios', 'Ken'],
-    'Post Fin Cab Assembly':  ['Spencer', 'Paisios', 'Ken'],  // Ken OK for commercial PostFin
-    'Panel Processing':       ['Ian', 'Bob'],
-    'Pack & Ship':            ['Ian', 'Spencer', 'Bob', 'Jonathan'],
-    'Delivery':               ['Ian', 'Spencer', 'Bob', 'Jonathan'],
+    'Benchwork':              ['Spencer', 'Jonathan'],
+    'Pre Fin Cab Assembly':   ['Bob'],
+    'Post Fin Cab Assembly':  ['Paisios', 'Spencer', 'Ken'],  // Ken OK for commercial PostFin
+    'Panel Processing':       ['Bob'],
+    'Pack & Ship':            ['Spencer', 'Bob', 'Jonathan'],
+    'Delivery':               ['Spencer', 'Bob', 'Jonathan'],
   },
   'Countertop/Surface': {
-    'Benchwork':              ['Bob', 'Spencer'],
-    'Post Fin Cab Assembly':  ['Spencer', 'Paisios'],
+    'Benchwork':              ['Spencer', 'Jonathan'],
+    'Pre Fin Cab Assembly':   ['Bob'],
+    'Post Fin Cab Assembly':  ['Paisios', 'Spencer'],
     'Panel Processing':       ['Bob'],
-    'Pack & Ship':            ['Ian', 'Spencer', 'Bob', 'Jonathan'],
-    'Delivery':               ['Ian', 'Spencer', 'Bob', 'Jonathan'],
+    'Pack & Ship':            ['Spencer', 'Bob', 'Jonathan'],
+    'Delivery':               ['Spencer', 'Bob', 'Jonathan'],
   },
   'Mixed': {
-    'Benchwork':              ['Ian', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly':   ['Ian', 'Bob', 'Paisios'],  // Ken removed per matrix hard rule
-    'Post Fin Cab Assembly':  ['Spencer', 'Paisios'],
+    'Benchwork':              ['Spencer', 'Jonathan'],
+    'Pre Fin Cab Assembly':   ['Bob'],  // Ken removed per matrix hard rule
+    'Post Fin Cab Assembly':  ['Paisios', 'Spencer'],
     'Engineering':            ['Paisios', 'Jonathan'],
-    'Pack & Ship':            ['Ian', 'Spencer', 'Bob', 'Jonathan'],
-    'Delivery':               ['Ian', 'Spencer', 'Bob', 'Jonathan'],
+    'Pack & Ship':            ['Spencer', 'Bob', 'Jonathan'],
+    'Delivery':               ['Spencer', 'Bob', 'Jonathan'],
   },
 };
 
@@ -764,6 +770,12 @@ function getCandidates(subtype, station) {
 // PATCH 3: Hard rules — placement constraints that override SECONDARY routing.
 // Returns null if OK, or a string describing the violation.
 function hardRuleViolation(crew, station, subtype, week) {
+  // Departures: blocks planner placement AND board-override forces (the
+  // validator's checkHardRule consumes this). Week-gated so historical
+  // re-validation of pre-departure rows stays valid.
+  if (crew === 'Ian' && week >= '2026-06-11') {
+    return 'Ian left the team effective 2026-06-11';
+  }
   if (crew === 'Ken' && station === 'Benchwork') {
     return 'Ken never does Benchwork';
   }
@@ -2170,6 +2182,10 @@ module.exports = {
   // force at validation time instead of letting applyForceAssignments
   // throw mid-pass-2 (2026-06-10 smoke-test finding).
   hardRuleViolation,
+  // Routing matrices exported for tests (synthetic multi-primary injection
+  // in test-multi-primary-spillover.js) and matrix-vs-doc validation tooling.
+  ROUTING,
+  SECONDARY,
   translateOverrideRows,
   mergeForceAssignments,
   mergeCrewExclusions,

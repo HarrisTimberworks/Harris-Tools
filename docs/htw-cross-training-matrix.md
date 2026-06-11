@@ -20,7 +20,7 @@
 | Jonathan Korban | 78941017 | Jonathan Korban | PM / Engineering | 40 | Active | Commercial + Res-FL Engineering lead |
 | Paisios | 77398083 | paisios@harristimberworks.com | Multi-station utility | 40 | Active | Primary P&S / Delivery; Secondary wide range |
 | Rob | 102500064 | rob tomb | Remote PT Engineering | as-needed | Active | Engineering only, remote, part-time |
-| Ian Ratcliffe | 99508397 | ian ratcliffe | Shop floor lead | 40 | Active | Primary Benchwork for FL/Commercial/C/S; Primary Post Fin |
+| Ian Ratcliffe | 99508397 | ian ratcliffe | Shop floor lead | — | **DEPARTED 2026-06-11** (moved to North Carolina) | Removed from all routing; hard rule blocks any assignment from week of 6/8 forward. Historical records retain his name. |
 | Vladimir "Spencer" Almgren | 97341714 | Vladimir Almgren | Shop floor | 40 | Active | Primary Benchwork for FF/Mixed; wide Secondary |
 | Ken | — (no monday account) | — | CNC / Panel Processing | 40 | Active | Panel Processing Primary. Never Benchwork. Post Fin Commercial only. |
 | Robert "Bob" Brening | 100329892 | Robert Brening | Shop Foreman | 40 | **Employee: 2026-05-18**; subcontract 4/27 Mon-Wed | Primary on nearly everything once employed |
@@ -63,18 +63,19 @@ Production flows sequentially through these 7 stations:
 
 The SCHEDULER uses this first. When multiple Primaries are listed, hours split evenly.
 
+**Revised 2026-06-11 (Ian departed).** New chains per Chris: PostFin Bob > Paisios > Spencer > Ken(Commercial-only); Bench Bob > Spencer > Jonathan; PreFin Spencer > Bob. Uniform across subtypes.
+
 | Station | Res - Face Frame | Res - Frameless | Commercial | Countertop/Surface | Mixed (→FF) |
 |---|---|---|---|---|---|
 | Engineering | Chris | Chris | **Jonathan** | **Jonathan** | Chris |
 | Panel Processing | **Ken** | **Ken** | **Ken** | **Ken** | **Ken** |
-| Benchwork | **Spencer** | **Ian** | **Ian** | **Ian** | **Spencer** |
-| Pre Fin Cab Assembly | **Spencer** | **Ian** | **Ian** | **Ian** | **Spencer** |
-| Post Fin Cab Assembly | Ian + Bob | Ian + Bob | Ian + Bob | Ian + Bob | Ian + Bob |
+| Benchwork | **Bob** | **Bob** | **Bob** | **Bob** | **Bob** |
+| Pre Fin Cab Assembly | **Spencer** | **Spencer** | **Spencer** | **Spencer** | **Spencer** |
+| Post Fin Cab Assembly | **Bob** | **Bob** | **Bob** | **Bob** | **Bob** |
 | Pack & Ship | Paisios | Paisios | Paisios | Paisios | Paisios |
 | Delivery | Paisios | Paisios | Paisios | Paisios | Paisios |
 
 **Primary rules:**
-- "Ian + Bob" means both are Primary — split hours evenly between them. If one is unavailable (TO, field work, not yet started), the other takes the whole load OR Secondary fills.
 - Bob is FILTERED OUT of Primary routing before his employment start date 2026-05-18 (controlled by `BOB_START_DATE` constant in scripts).
 - When Primary is over capacity, route overflow to Secondary (see Section 4).
 
@@ -84,64 +85,67 @@ The SCHEDULER uses this first. When multiple Primaries are listed, hours split e
 
 Used by the rebalancer when Primary is at/over capacity, or when Chris explicitly routes away from an overloaded Primary. Ordered by preference (first listed = most preferred Secondary).
 
+**Revised 2026-06-11 (Ian departed).** Secondary chains now uniform across subtypes except Ken's Commercial-only PostFin slot.
+
 ### Res - Face Frame
 
 | Station | Secondaries (in order) |
 |---|---|
 | Engineering | Paisios, Jonathan |
-| Panel Processing | Bob, Ian (emergency only — Ian isn't trained on CNC) |
-| Benchwork | Ian, Bob, Paisios |
-| Pre Fin Cab Assembly | Ian, Bob, Paisios |
-| Post Fin Cab Assembly | Spencer, Paisios |
-| Pack & Ship | Ian, Spencer, Bob, Jonathan |
-| Delivery | Ian, Spencer, Bob, Jonathan |
+| Panel Processing | Bob |
+| Benchwork | Spencer, Jonathan |
+| Pre Fin Cab Assembly | Bob |
+| Post Fin Cab Assembly | Paisios, Spencer |
+| Pack & Ship | Spencer, Bob, Jonathan |
+| Delivery | Spencer, Bob, Jonathan |
 
 ### Res - Frameless
 
 | Station | Secondaries (in order) |
 |---|---|
 | Engineering | Paisios, Jonathan, Rob (fill only) |
-| Panel Processing | Bob, Ian (CNC-trained for FL) |
-| Benchwork | Spencer, Bob, Paisios |
-| Pre Fin Cab Assembly | Spencer, Bob, Paisios |
-| Post Fin Cab Assembly | Spencer, Paisios |
-| Pack & Ship | Ian, Spencer, Bob, Jonathan |
-| Delivery | Ian, Spencer, Bob, Jonathan |
+| Panel Processing | Bob |
+| Benchwork | Spencer, Jonathan |
+| Pre Fin Cab Assembly | Bob |
+| Post Fin Cab Assembly | Paisios, Spencer |
+| Pack & Ship | Spencer, Bob, Jonathan |
+| Delivery | Spencer, Bob, Jonathan |
 
 ### Commercial
 
 | Station | Secondaries (in order) |
 |---|---|
 | Engineering | Chris (if load permits), Paisios |
-| Panel Processing | Bob, Ian |
-| Benchwork | Spencer, Bob, Paisios |
-| Pre Fin Cab Assembly | Spencer, Bob, Paisios, Ken (commercial only — Ken OK here) |
-| Post Fin Cab Assembly | Spencer, Paisios, **Ken (commercial only)** |
-| Pack & Ship | Ian, Spencer, Bob, Jonathan |
-| Delivery | Ian, Spencer, Bob, Jonathan |
+| Panel Processing | Bob |
+| Benchwork | Spencer, Jonathan |
+| Pre Fin Cab Assembly | Bob |
+| Post Fin Cab Assembly | Paisios, Spencer, **Ken (commercial only)** |
+| Pack & Ship | Spencer, Bob, Jonathan |
+| Delivery | Spencer, Bob, Jonathan |
 
 ### Countertop/Surface
 
 | Station | Secondaries (in order) |
 |---|---|
 | Engineering | Chris (if load permits), Paisios |
-| Panel Processing | Bob (especially for edgebanding), Ian |
-| Benchwork | Bob, Spencer (rare — most C/S jobs have no benchwork) |
-| Post Fin Cab Assembly | Spencer, Paisios |
-| Pack & Ship | Ian, Spencer, Bob, Jonathan |
-| Delivery | Ian, Spencer, Bob, Jonathan |
+| Panel Processing | Bob (especially for edgebanding) |
+| Benchwork | Spencer, Jonathan (rare — most C/S jobs have no benchwork) |
+| Pre Fin Cab Assembly | Bob |
+| Post Fin Cab Assembly | Paisios, Spencer |
+| Pack & Ship | Spencer, Bob, Jonathan |
+| Delivery | Spencer, Bob, Jonathan |
 
 ### Mixed (treats as FF primarily, but draws from both pools)
 
 | Station | Secondaries (in order) |
 |---|---|
 | Engineering | Jonathan, Paisios |
-| Panel Processing | Bob, Ian |
-| Benchwork | Ian, Bob, Paisios |
-| Pre Fin Cab Assembly | Ian, Bob, Paisios |
-| Post Fin Cab Assembly | Spencer, Paisios |
-| Pack & Ship | Ian, Spencer, Bob, Jonathan |
-| Delivery | Ian, Spencer, Bob, Jonathan |
+| Panel Processing | Bob |
+| Benchwork | Spencer, Jonathan |
+| Pre Fin Cab Assembly | Bob |
+| Post Fin Cab Assembly | Paisios, Spencer |
+| Pack & Ship | Spencer, Bob, Jonathan |
+| Delivery | Spencer, Bob, Jonathan |
 
 ---
 
@@ -153,8 +157,9 @@ These are absolute — the scheduler must never route in violation:
 2. **Ken's Post Fin work is Commercial jobs ONLY.** Not residential.
 3. **Rob is remote PT, Engineering only.** Never schedule for shop-floor stations.
 4. **Bob is FILTERED OUT pre-2026-05-18** for employee-based scheduling. (Before that date he can only appear as a subcontractor entry in overrides.)
-5. **Paisios on Benchwork is LIMITED to light work** (small pieces, prep, assisting). Not a full bench replacement for Ian/Spencer.
+5. **Paisios on Benchwork is LIMITED to light work** (small pieces, prep, assisting). Not a full bench replacement for Bob/Spencer.
 6. **Ken on Pre Fin is emergency only.** Capability exists but disruptive to his Panel throughput — avoid unless Primary + Secondary all over cap.
+7. **Ian is DEPARTED (2026-06-11).** Hard rule in `hardRuleViolation` blocks any assignment to Ian for week ≥ 2026-06-11 — planner placement and board-override forces alike. Pre-departure historical records stay valid.
 
 ---
 
