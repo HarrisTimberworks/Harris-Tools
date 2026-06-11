@@ -6,7 +6,7 @@
   <Principals>
     <Principal id="Author">
       <UserId>S-1-5-21-4283531568-2558343314-1502023002-1001</UserId>
-      <LogonType>InteractiveToken</LogonType>
+      <LogonType>S4U</LogonType>
     </Principal>
   </Principals>
   <Settings>
