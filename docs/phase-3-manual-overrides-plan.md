@@ -55,7 +55,9 @@ The Phase 1+2 code lives only on `claude/beautiful-villani-8d84a8`. Production a
 
 ## Out of scope (unchanged)
 
-Webhooks + button column (Phase 4), cloud VPS (Phase 4), SMTP email (monday relay suffices), future-week briefings (Phase 5), F.5a board automations (separately deferred by operator).
+Webhooks + button column (Phase 4), cloud VPS (Phase 4), SMTP email (monday relay suffices), future-week briefings (Phase 5).
+
+**F.5a board automations — DONE (2026-06-11).** 8 edit-detection automations live on board 18413101550 via the monday MCP `create_automation`: "when <input column> changes AND Status is Applied → set Status to Pending", one each for Hours, Job, Station, From Crew, From Week, To Crew, To Week, Allow Over-Cap (Reason deliberately unwatched — commentary, not plan input). Verified live: an Applied row's Hours edit flipped it to Pending within seconds. They coexist with the 3 pre-existing auto-stale automations (To-Week-passed → Stale group). **One cleanup needs the monday UI:** the first From Crew attempt (workflow id 7919565988, created ~09:5x 2026-06-11) came out with an inverted condition ("status is NOT Applied") and the API exposes no workflow delete — remove it in board → Automations (it's the OLDER of the two From Crew entries). Until deleted, its only effect: editing From Crew on a non-Applied row flips it to Pending (harmless on Pending, mildly annoying on Cleared rows).
 
 ---
 
