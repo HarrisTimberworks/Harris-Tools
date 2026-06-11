@@ -3,19 +3,13 @@
   "jobOverrides": {
     "11693156502": {
       "name": "F&B - Westridge Office",
-      "note": "Cabs at Clay ready for pickup. Only PostFin 8.6h remains. Target delivery Thu 5/28 (GC TBD).",
+      "note": "2026-06-11: stale 5/25 postfin customWindow removed; delivery 6/29, planner recomputes.",
       "remainingHours": {
         "eng": 0,
         "panel": 0,
         "bench": 0,
         "prefin": 0,
         "postfin": 8.6
-      },
-      "customWindow": {
-        "postfin": {
-          "start": "2026-05-25",
-          "end": "2026-05-25"
-        }
       }
     },
     "11693170191": {
@@ -226,6 +220,12 @@
         "bench": 40,
         "prefin": 0,
         "postfin": 0
+      },
+      "customWindow": {
+        "panel": {
+          "start": "2026-06-08",
+          "end": "2026-06-19"
+        }
       }
     },
     "11693186985": {
@@ -254,7 +254,13 @@
         "prefin": 0,
         "postfin": 16
       },
-      "parallelPostFin": true
+      "parallelPostFin": true,
+      "customWindow": {
+        "panel": {
+          "start": "2026-06-15",
+          "end": "2026-06-19"
+        }
+      }
     }
   },
   "crewCapacityOverrides": {
@@ -525,24 +531,14 @@
       "reason": "Westridge PostFin Thu 5/28 — operational pin"
     },
     {
-      "crew": "Bob",
+      "crew": "Spencer",
       "jobId": "11835189937",
+      "week": "2026-06-15",
+      "hours": 31.5,
+      "reason": "2026-06-11 Ian-departure rebalance: R5-P2 bench tail — Spencer has 33.8h free wk 6/15 but the weekly-budget pacing left 31.5h unplaced; pin it explicitly.",
       "stations": [
         "Benchwork"
-      ],
-      "week": "2026-06-01",
-      "hours": 23,
-      "reason": "R5-P2 CU bench — Bob routes ahead of Spencer per Chris preference"
-    },
-    {
-      "crew": "Bob",
-      "jobId": "11835189937",
-      "stations": [
-        "Benchwork"
-      ],
-      "week": "2026-06-08",
-      "hours": 23,
-      "reason": "R5-P2 CU bench — Bob continues, Spencer freed"
+      ]
     }
   ],
   "notes": "Edit this file between --plan runs to reflect reality. Planner reads it fresh each run."
