@@ -87,4 +87,16 @@ All deliverables landed same-session, registration last per operator directive:
 - **P3.3** `.bat` wrappers + `.vbs` hidden-window wrappers, rollup logging convention.
 - **Merge:** `claude/beautiful-villani-8d84a8` fast-forwarded into `main` (the production home; Task Scheduler must never point into a `.claude/worktrees/` path). Main's stale 5/1-era local edits preserved in `git stash` ("pre-Phase-2-merge"). Full suite green on main (22 files).
 - **Registration:** `HTW Planner - Poll` (every 1 min) + `HTW Planner - Saturday` (Sat 18:00), interactive token (S4U denied without elevation — upgrade path in task-scheduler/README.md), hidden via VBS, XMLs exported to task-scheduler/.
-- **Verification:** manual poll no-op (Idle) ✓; manual poll full run ✓ (83s, docs regenerated, summary update posted, Idle restored); unattended scheduled-task pickup test run overnight — see rolling handoff for the result.
+- **Verification:** manual poll no-op (Idle) ✓; manual poll full run ✓ (83s, docs regenerated, summary update posted, Idle restored); **unattended scheduled-task pickup PROVEN** — Run Requested 05:00:36Z → task picked it up 05:01:13Z → Idle 05:02:35Z, 90s run, no human in the loop.
+
+### Adversarial review (2026-06-11, 43-agent, skeptic-verified) — 12 confirmed, 8 refuted, all fixed
+
+1. **Atomic lock (HIGH ×3 lenses).** acquireLock was check-then-write (TOCTOU) — and the poll + Saturday tasks are *separate* tasks (`IgnoreNew` doesn't cross-serialize), so at Sat 18:00 both could double-run the planner, interleaving Capacity View delete/add passes. Now `{ flag: 'wx' }` exclusive create; stale-steal via unlink + single retry; read-based lock-state checks.
+2. **Lock ownership (HIGH).** releaseLock unconditionally unlinked — a resumed-from-sleep run could delete a stealer's live lock. Acquire now returns a token; release only removes its own lock.
+3. **Stuck-Running self-heal (MEDIUM ×2).** A killed run (logoff/reboot/battery-stop) stranded the trigger at Running forever; poll only acts on Run Requested. Now: Running + absent/stale lock ⇒ flip to Error, post explanation update, notify Chris — heals within a minute.
+4. **Failure-path hardening (HIGH+MEDIUM).** The post-run status flip was the only unguarded monday write (failure swallowed the summary AND the notification); the Saturday run could die on a transient status-read or Running-claim failure it doesn't gate on; a lock-skipped Saturday run exited silently. All wrapped: scheduled mode tolerates incidental gql failures, skipped Saturday runs notify Chris, post-run flip failure no longer suppresses the update/notification (and self-heal #3 corrects the status).
+5. **setup-trigger-item duplicate guard (MEDIUM).** Transient verify failure no longer recreates the Control group/item — only a successful zero-item query does (briefing-doc bug family).
+6. **Summary honesty (LOW).** Unexpected-throw runs no longer claim "previous good state preserved" — that wording is reserved for run-planner's verified pass-2 guard path.
+7. **.bat locale fix (MEDIUM).** Log filename now uses `Get-Date -Format yyyy-MM-dd` instead of `%date%` substring parsing (which silently breaks both tasks if Windows regional short-date format changes). Note: the same latent pattern exists in `run-daily-rollups.bat`/`run-scheduler.bat` (pre-existing, out of scope here).
+
+Plus an operational polish from overnight observation: idle poll ticks are fully silent (no log line per minute; `VERBOSE=1` restores), and network-outage ticks log one line instead of a stack trace per minute.

@@ -40,19 +40,18 @@ async function ensureTriggerItem({ deps = {} } = {}) {
       // Read-only resolve is fine under dryRun, but keep the no-config case
       // at zero API calls; with config we verify before reporting.
     }
-    const read = await (async () => {
-      try {
-        const r = await _gqlFn('query ($item: [ID!]) { items(ids: $item) { id name } }', { item: [String(existing.itemId)] });
-        return r?.items?.[0] || null;
-      } catch (e) {
-        return null;
-      }
-    })();
+    // REVIEW FIX (2026-06-11): only a SUCCESSFUL query with zero items means
+    // "genuinely deleted → recreate". A transient gql failure must rethrow —
+    // swallowing it here would create a duplicate Control group + trigger
+    // item and silently orphan the one Bob uses (same bug family as the
+    // briefing-doc duplicate guard).
+    const r = await _gqlFn('query ($item: [ID!]) { items(ids: $item) { id name } }', { item: [String(existing.itemId)] });
+    const read = (r && r.items && r.items[0]) || null;
     if (read) {
       _logger.log(`Trigger item ${existing.itemId} resolves — reusing.`);
       return { ...existing, created: false };
     }
-    _logger.log(`Trigger item ${existing.itemId} no longer resolves — recreating.`);
+    _logger.log(`Trigger item ${existing.itemId} no longer resolves (query succeeded, zero items) — recreating.`);
   }
 
   if (dryRun) {

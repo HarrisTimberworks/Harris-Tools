@@ -57,7 +57,17 @@ function makeFakeFs(seed = {}) {
         if (!files.has(String(p))) throw new Error(`fake fs: no such file ${p}`);
         return files.get(String(p));
       },
-      writeFileSync: (p, c) => { files.set(String(p), c); },
+      // Emulates the real fs's exclusive-create semantics: { flag: 'wx' }
+      // throws EEXIST when the file already exists. The lock relies on this
+      // for atomicity (REVIEW FIX: TOCTOU), so the fake must honor it.
+      writeFileSync: (p, c, opts) => {
+        if (opts && opts.flag === 'wx' && files.has(String(p))) {
+          const e = new Error(`EEXIST: file already exists, open '${p}'`);
+          e.code = 'EEXIST';
+          throw e;
+        }
+        files.set(String(p), c);
+      },
       unlinkSync: (p) => { files.delete(String(p)); },
     },
   };
@@ -288,6 +298,137 @@ function baseDeps(gql, fakeFs, runPlannerFn) {
     let msg = null;
     try { await runOnce({ mode: 'poll', deps }); } catch (e) { msg = e.message; }
     check('throws pointing at setup script', /setup-trigger-item/.test(msg || ''), msg);
+  }
+
+  // ===========================================================================
+  // REVIEW FIXES (2026-06-11 adversarial review of the P3 diff)
+  // ===========================================================================
+
+  console.log('\nTest 15: REVIEW FIX — lock acquire is ATOMIC (wx), not check-then-write');
+  {
+    // Simulate the Saturday-18:00 race: existsSync says free (both processes
+    // checked before either wrote), but the exclusive create loses. A
+    // check-then-write implementation would claim ok:true and double-run.
+    const f = makeFakeFs();
+    const lyingFs = {
+      ...f.fs,
+      existsSync: (p) => /planner\.lock/.test(String(p)) ? false : f.fs.existsSync(p),
+    };
+    // Winner takes the lock for real…
+    f.files.set('/fake/planner.lock', JSON.stringify({ pid: 1, token: 'winner', startedAt: NOW().toISOString() }));
+    // …loser must fail via EEXIST despite existsSync lying.
+    const a = acquireLock({ fsImpl: lyingFs, lockFile: '/fake/planner.lock', now: NOW, pid: 2 });
+    check('loser of the race gets ok:false', a.ok === false, JSON.stringify(a));
+    check('winner lock intact', JSON.parse(f.files.get('/fake/planner.lock')).token === 'winner', f.files.get('/fake/planner.lock'));
+  }
+
+  console.log('\nTest 16: REVIEW FIX — releaseLock only removes the lock it owns');
+  {
+    const f = makeFakeFs();
+    const a = acquireLock({ fsImpl: f.fs, lockFile: '/fake/planner.lock', now: NOW, pid: 11 });
+    check('acquire returns an ownership token', a.ok === true && typeof a.token === 'string' && a.token.length > 0, JSON.stringify(a));
+    // A stealer replaces the lock (stale-steal scenario)…
+    f.files.set('/fake/planner.lock', JSON.stringify({ pid: 99, token: 'stolen-by-99', startedAt: NOW().toISOString() }));
+    releaseLock({ fsImpl: f.fs, lockFile: '/fake/planner.lock', token: a.token });
+    check('foreign lock NOT deleted by stale owner', f.files.has('/fake/planner.lock'), '');
+    releaseLock({ fsImpl: f.fs, lockFile: '/fake/planner.lock', token: 'stolen-by-99' });
+    check('matching token releases', !f.files.has('/fake/planner.lock'), '');
+  }
+
+  console.log('\nTest 17: REVIEW FIX — poll + status Running + dead lock → self-heal to Error + notify');
+  {
+    // A killed run (logoff, reboot, battery-stop) leaves status=Running
+    // forever; poll only acts on Run Requested. Recovery: Running with NO
+    // live lock means the run died — flip to Error, post update, notify.
+    const gql = makeFakeGql({ status: 'Running' });
+    const f = makeFakeFs();   // no lock file
+    const r = await runOnce({ mode: 'poll', deps: baseDeps(gql, f) });
+    check('ran:false recovered:true', r.ran === false && r.recovered === true, JSON.stringify(r));
+    check('status flipped to Error', gql.statusLabels().join(',') === 'Error', JSON.stringify(gql.statusLabels()));
+    check('update posted explaining the dead run', /died|crash|interrupted/i.test(gql.calls.find(c => /create_update/.test(c.query))?.variables?.body || ''), '');
+    check('Chris notified', gql.kinds().includes('notify'), JSON.stringify(gql.kinds()));
+  }
+
+  console.log('\nTest 18: REVIEW FIX — poll + status Running + LIVE lock → normal in-flight skip, no status writes');
+  {
+    const gql = makeFakeGql({ status: 'Running' });
+    const f = makeFakeFs({ '/fake/logs/planner.lock': JSON.stringify({ pid: 5, token: 't', startedAt: NOW().toISOString() }) });
+    const r = await runOnce({ mode: 'poll', deps: baseDeps(gql, f) });
+    check('skipped (run in flight)', r.ran === false && !r.recovered, JSON.stringify(r));
+    check('no status writes, no notify', gql.statusLabels().length === 0 && !gql.kinds().includes('notify'), JSON.stringify(gql.kinds()));
+  }
+
+  console.log('\nTest 19: REVIEW FIX — scheduled mode survives a failing status read');
+  {
+    // The Saturday run must not be killed by a transient gql failure on a
+    // read it doesn't even gate on.
+    const gql = async (q, v) => {
+      if (/change_multiple/.test(q)) return { change_multiple_column_values: { id: '1' } };
+      if (/create_update/.test(q)) return { create_update: { id: 'u' } };
+      if (/create_notification/.test(q)) return { create_notification: { text: 'ok' } };
+      if (/items\s*\(/.test(q)) throw new Error('GraphQL error: 502');
+      throw new Error('unrouted: ' + q.slice(0, 50));
+    };
+    const f = makeFakeFs();
+    const r = await runOnce({ mode: 'scheduled', deps: { ...baseDeps(gql, f), gqlFn: gql } });
+    check('scheduled run still ran', r.ran === true, JSON.stringify(r));
+  }
+
+  console.log('\nTest 20: REVIEW FIX — poll + failing status read → quiet skip (network heals next tick)');
+  {
+    const gql = async (q) => { throw new Error('fetch failed'); };
+    const f = makeFakeFs();
+    const r = await runOnce({ mode: 'poll', deps: { ...baseDeps(gql, f), gqlFn: gql } });
+    check('quiet skip, no throw', r.ran === false && /status read failed/i.test(r.skipped || ''), JSON.stringify(r));
+  }
+
+  console.log('\nTest 21: REVIEW FIX — scheduled + lock held → Chris notified about the skipped Saturday run');
+  {
+    const gql = makeFakeGql({ status: 'Idle' });
+    const f = makeFakeFs({ '/fake/logs/planner.lock': JSON.stringify({ pid: 5, token: 't', startedAt: NOW().toISOString() }) });
+    const r = await runOnce({ mode: 'scheduled', deps: baseDeps(gql, f) });
+    check('skipped on lock', r.ran === false && /lock/i.test(r.skipped || ''), JSON.stringify(r));
+    const notif = gql.calls.find(c => /create_notification/.test(c.query));
+    check('notification fired about the skipped scheduled run', /skipped|lock/i.test(notif?.variables?.text || ''), notif?.variables?.text || '(none)');
+  }
+
+  console.log('\nTest 22: REVIEW FIX — post-run status-flip failure no longer swallows update + notification');
+  {
+    let statusWrites = 0;
+    const calls = [];
+    const gql = async (q, v) => {
+      calls.push({ q, v });
+      if (/change_multiple/.test(q)) {
+        statusWrites++;
+        if (statusWrites === 2) throw new Error('GraphQL error: complexity budget exhausted');  // the post-run flip
+        return { change_multiple_column_values: { id: '1' } };
+      }
+      if (/items\s*\(/.test(q)) return { items: [{ column_values: [{ id: CONFIG.statusColumnId, text: 'Run Requested' }] }] };
+      if (/create_update/.test(q)) return { create_update: { id: 'u' } };
+      if (/create_notification/.test(q)) return { create_notification: { text: 'ok' } };
+      throw new Error('unrouted');
+    };
+    const f = makeFakeFs();
+    const result = cleanResult();
+    result.validation.conflicts = [{ rowId: 'RX', reason: 'x' }];   // notification expected
+    let threw = false;
+    try {
+      await runOnce({ mode: 'poll', deps: { ...baseDeps(gql, f), gqlFn: gql, runPlannerFn: async () => result } });
+    } catch (e) { threw = true; }
+    check('no throw', threw === false, '');
+    check('summary update still posted', calls.some(c => /create_update/.test(c.q)), '');
+    check('notification still sent', calls.some(c => /create_notification/.test(c.q)), '');
+    check('lock released', !f.files.has('/fake/logs/planner.lock'), '');
+  }
+
+  console.log('\nTest 23: REVIEW FIX — unexpected-throw summary does NOT claim "previous good state preserved"');
+  {
+    const gql = makeFakeGql({ status: 'Run Requested' });
+    const f = makeFakeFs();
+    await runOnce({ mode: 'poll', deps: baseDeps(gql, f, async () => { throw new Error('disk full'); }) });
+    const body = gql.calls.find(c => /create_update/.test(c.query))?.variables?.body || '';
+    check('update mentions unexpected failure + the error', /unexpected/i.test(body) && /disk full/.test(body), body);
+    check('update does NOT assert preservation it cannot verify', !/previous good state preserved/i.test(body), body);
   }
 
   console.log();

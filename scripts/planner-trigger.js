@@ -40,29 +40,66 @@ function decideAction(statusText) {
   return statusText === TRIGGER_LABELS.requested ? 'run' : 'skip';
 }
 
-// Lockfile guard. Stale locks (older than staleMs) are stolen — covers a
-// crashed run that never released. Belt-and-suspenders with the task XML's
-// MultipleInstancesPolicy=IgnoreNew.
-function acquireLock({ fsImpl = fs, lockFile = DEFAULT_LOCK_FILE, now = () => new Date(), staleMs = LOCK_STALE_MS, pid = process.pid } = {}) {
-  if (fsImpl.existsSync(lockFile)) {
-    let held = null;
-    try { held = JSON.parse(fsImpl.readFileSync(lockFile, 'utf8')); } catch (e) { /* corrupt → steal */ }
-    if (held && held.startedAt) {
-      const age = now().getTime() - new Date(held.startedAt).getTime();
-      if (age < staleMs) {
-        return { ok: false, reason: `lock held by pid ${held.pid} since ${held.startedAt}` };
-      }
-    }
+// Lockfile guard. REVIEW FIX (2026-06-11): the original check-then-write was
+// a TOCTOU — the every-minute poll task and the Saturday task are SEPARATE
+// scheduled tasks (IgnoreNew doesn't cross-serialize them) and fire within
+// milliseconds at Sat 18:00; both could pass existsSync and double-run the
+// planner (concurrent Capacity View delete/add passes). Acquisition is now
+// an ATOMIC exclusive create ({ flag: 'wx' }); stale locks (older than
+// staleMs — a crashed run that never released) are stolen via unlink +
+// retry-wx. Each acquire carries an ownership token so releaseLock can never
+// delete a lock a stealer now owns.
+function tryExclusiveCreate(fsImpl, lockFile, payload) {
+  try {
+    fsImpl.writeFileSync(lockFile, payload, { flag: 'wx' });
+    return true;
+  } catch (e) {
+    if (e && e.code === 'EEXIST') return false;
+    throw e;
   }
-  const dir = path.dirname(lockFile);
-  if (!fsImpl.existsSync(dir)) fsImpl.mkdirSync(dir, { recursive: true });
-  fsImpl.writeFileSync(lockFile, JSON.stringify({ pid, startedAt: now().toISOString() }));
-  return { ok: true };
 }
 
-function releaseLock({ fsImpl = fs, lockFile = DEFAULT_LOCK_FILE } = {}) {
+function readLockState({ fsImpl = fs, lockFile = DEFAULT_LOCK_FILE, now = () => new Date(), staleMs = LOCK_STALE_MS } = {}) {
+  // Read-based, not existsSync-based: between an EEXIST and this read the
+  // holder may release, and an existsSync answer can be stale by the time
+  // it's used. A failed read (ENOENT or otherwise) = no lock to honor.
+  let raw = null;
+  try { raw = fsImpl.readFileSync(lockFile, 'utf8'); } catch (e) { return { state: 'absent', held: null }; }
+  let held = null;
+  try { held = JSON.parse(raw); } catch (e) { /* corrupt */ }
+  if (!held || !held.startedAt) return { state: 'stale', held };
+  const age = now().getTime() - new Date(held.startedAt).getTime();
+  return { state: age < staleMs ? 'fresh' : 'stale', held };
+}
+
+function acquireLock({ fsImpl = fs, lockFile = DEFAULT_LOCK_FILE, now = () => new Date(), staleMs = LOCK_STALE_MS, pid = process.pid } = {}) {
+  const token = `${pid}-${now().getTime()}-${Math.random().toString(36).slice(2, 10)}`;
+  const payload = JSON.stringify({ pid, token, startedAt: now().toISOString() });
+  const dir = path.dirname(lockFile);
+  if (!fsImpl.existsSync(dir)) fsImpl.mkdirSync(dir, { recursive: true });
+
+  if (tryExclusiveCreate(fsImpl, lockFile, payload)) return { ok: true, token };
+
+  const { state, held } = readLockState({ fsImpl, lockFile, now, staleMs });
+  if (state === 'fresh') {
+    return { ok: false, reason: `lock held by pid ${held.pid} since ${held.startedAt}` };
+  }
+  // Stale or corrupt → steal: remove and retry the exclusive create ONCE.
+  // Losing the retry means another process stole it in the same window.
+  try { fsImpl.unlinkSync(lockFile); } catch (e) { /* already gone */ }
+  if (tryExclusiveCreate(fsImpl, lockFile, payload)) return { ok: true, token };
+  return { ok: false, reason: 'lost the stale-steal race to another process' };
+}
+
+function releaseLock({ fsImpl = fs, lockFile = DEFAULT_LOCK_FILE, token = null } = {}) {
   try {
-    if (fsImpl.existsSync(lockFile)) fsImpl.unlinkSync(lockFile);
+    if (!fsImpl.existsSync(lockFile)) return;
+    if (token) {
+      let held = null;
+      try { held = JSON.parse(fsImpl.readFileSync(lockFile, 'utf8')); } catch (e) { /* corrupt → safe to remove */ }
+      if (held && held.token && held.token !== token) return;   // not ours anymore (stolen)
+    }
+    fsImpl.unlinkSync(lockFile);
   } catch (e) { /* best-effort */ }
 }
 
@@ -91,7 +128,14 @@ function buildRunSummary(result, { mode, startedAt, finishedAt } = {}) {
   }
 
   if (result?.planError) {
-    lines.push(`PLANNER ERROR — run aborted, previous good state preserved; outputs not regenerated:`);
+    // REVIEW FIX — only the structured planError path (run-planner's pass-2
+    // guard) verified that the previous state was preserved. An unexpected
+    // throw could have died anywhere; don't assert what we can't verify.
+    if (result.unexpectedError) {
+      lines.push(`PLANNER RUN FAILED (unexpected error) — outputs not regenerated; check logs/planner-<date>.log. Override-row statuses may be partially written:`);
+    } else {
+      lines.push(`PLANNER ERROR — run aborted, previous good state preserved; outputs not regenerated:`);
+    }
     lines.push(`  ${result.planError}`);
     return lines.join('\n');
   }
@@ -168,20 +212,51 @@ async function runOnce({ mode = 'poll', deps = {} } = {}) {
     throw new Error('planner-trigger: no trigger config — run `node scripts/setup-trigger-item.js` first (writes config/planner-trigger.json)');
   }
 
-  // Read the trigger status (poll mode gates on it; scheduled mode reads it
-  // anyway so a queued Run Requested is absorbed by this run rather than
-  // re-firing on the next poll tick).
-  const readQ = 'query ($item: [ID!]) { items(ids: $item) { column_values { id text } } }';
-  const read = await _gqlFn(readQ, { item: [String(config.itemId)] });
-  const statusText = (read?.items?.[0]?.column_values || []).find(c => c.id === config.statusColumnId)?.text || null;
+  // Read the trigger status. Poll mode gates on it; scheduled mode reads it
+  // only opportunistically and MUST survive a transient read failure — the
+  // weekly run shouldn't die for a 502 on a read it doesn't gate on
+  // (REVIEW FIX).
+  let statusText = null;
+  try {
+    const readQ = 'query ($item: [ID!]) { items(ids: $item) { column_values { id text } } }';
+    const read = await _gqlFn(readQ, { item: [String(config.itemId)] });
+    statusText = (read?.items?.[0]?.column_values || []).find(c => c.id === config.statusColumnId)?.text || null;
+  } catch (e) {
+    if (mode === 'poll') {
+      return { ran: false, skipped: `status read failed (${e.message}) — next tick retries` };
+    }
+    _logger.log(`planner-trigger: status read failed (${e.message}) — scheduled run proceeding anyway`);
+  }
 
   if (mode === 'poll' && decideAction(statusText) !== 'run') {
+    // REVIEW FIX — stuck-Running self-heal: a run killed mid-flight (logoff,
+    // reboot, battery-stop) leaves status=Running with no live lock; poll
+    // only acts on Run Requested, so without this the board lies until the
+    // Saturday run. Running + absent/stale lock ⇒ the run died: surface it.
+    if (statusText === TRIGGER_LABELS.running) {
+      const { state } = readLockState({ fsImpl: _fsImpl, lockFile: _lockFile, now: _now });
+      if (state !== 'fresh') {
+        try { await setTriggerStatus(config, TRIGGER_LABELS.error, { gqlFn: _gqlFn }); } catch (e) { _logger.log(`recovery status flip failed: ${e.message}`); }
+        const msg = 'Previous planner run died mid-flight (status was Running with no live lock — machine sleep, logoff, or crash). Status flipped to Error. Re-request a run when ready; the previous docs/plan remain whatever the last completed run wrote.';
+        try { await postTriggerUpdate(config, msg, { gqlFn: _gqlFn }); } catch (e) { /* best-effort */ }
+        try { await notifyChris(config, `HTW Planner: a run died mid-flight and was marked Error — re-request when ready.`, { gqlFn: _gqlFn, userId: _userId }); } catch (e) { /* best-effort */ }
+        _logger.log(msg);
+        return { ran: false, recovered: true };
+      }
+    }
     return { ran: false, skipped: `status is ${JSON.stringify(statusText)} — nothing requested` };
   }
 
   const lock = acquireLock({ fsImpl: _fsImpl, lockFile: _lockFile, now: _now });
   if (!lock.ok) {
     _logger.log(`planner-trigger: skipping — ${lock.reason} (request preserved for next tick)`);
+    // REVIEW FIX — a skipped SCHEDULED run is a lost weekly backbone run;
+    // unlike a poll tick it won't retry in a minute. Tell Chris.
+    if (mode === 'scheduled') {
+      try {
+        await notifyChris(config, `HTW Planner: Saturday scheduled run was skipped — ${lock.reason}. If no run is genuinely in flight, re-request via the Planner Trigger.`, { gqlFn: _gqlFn, userId: _userId });
+      } catch (e) { _logger.log(`skip notification failed: ${e.message}`); }
+    }
     return { ran: false, skipped: `locked: ${lock.reason}` };
   }
 
@@ -189,17 +264,30 @@ async function runOnce({ mode = 'poll', deps = {} } = {}) {
   let result = null;
   let unexpectedError = null;
   try {
-    await setTriggerStatus(config, TRIGGER_LABELS.running, { gqlFn: _gqlFn });
+    // The Running claim is operator UX, not the concurrency guard (the lock
+    // is) — a transient failure here must not kill the run (REVIEW FIX).
+    try {
+      await setTriggerStatus(config, TRIGGER_LABELS.running, { gqlFn: _gqlFn });
+    } catch (e) {
+      _logger.log(`planner-trigger: Running claim failed (${e.message}) — proceeding under lock`);
+    }
     try {
       result = await _runPlanner({ mode: 'plan' });
     } catch (e) {
       unexpectedError = e.message || String(e);
-      result = { validation: { accepted: [], conflicts: [] }, planError: unexpectedError };
+      result = { validation: { accepted: [], conflicts: [] }, planError: unexpectedError, unexpectedError: true };
     }
     const finishedAt = _now();
 
+    // REVIEW FIX — the post-run flip was the only unguarded monday write: a
+    // failure here (likely right after a mutation-heavy run) stranded status
+    // at Running AND swallowed the summary + notification below.
     const failed = !!result.planError;
-    await setTriggerStatus(config, failed ? TRIGGER_LABELS.error : TRIGGER_LABELS.idle, { gqlFn: _gqlFn });
+    try {
+      await setTriggerStatus(config, failed ? TRIGGER_LABELS.error : TRIGGER_LABELS.idle, { gqlFn: _gqlFn });
+    } catch (e) {
+      _logger.log(`planner-trigger: post-run status flip failed (${e.message}) — the stuck-Running self-heal will correct it on a later tick`);
+    }
 
     const summary = buildRunSummary(result, { mode, startedAt, finishedAt });
     try {
@@ -225,7 +313,7 @@ async function runOnce({ mode = 'poll', deps = {} } = {}) {
       notified: n.notify,
     };
   } finally {
-    releaseLock({ fsImpl: _fsImpl, lockFile: _lockFile });
+    releaseLock({ fsImpl: _fsImpl, lockFile: _lockFile, token: lock.token });
   }
 }
 
@@ -236,6 +324,7 @@ module.exports = {
   decideAction,
   acquireLock,
   releaseLock,
+  readLockState,
   loadTriggerConfig,
   buildRunSummary,
   shouldNotify,

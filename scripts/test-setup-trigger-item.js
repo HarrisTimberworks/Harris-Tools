@@ -116,6 +116,28 @@ const silentLogger = { log: () => {} };
     check('no config written', f.writes.length === 0, '');
   }
 
+  console.log('\nTest 6: REVIEW FIX — transient verify failure RETHROWS (no duplicate Control group)');
+  {
+    // Same bug family as the briefing-doc duplicate guard: a network blip
+    // during the verify read must NOT be treated as "item deleted" — that
+    // would create a second Control group + trigger item and silently
+    // orphan the one Bob uses.
+    const f = makeFakeFs({ '/fake/cfg.json': CONFIG });
+    const calls = [];
+    const gql = async (q, v) => {
+      calls.push(q);
+      if (/items\s*\(/.test(q)) throw new Error('GraphQL error: 502 bad gateway');
+      return makeFakeGql()(q, v);
+    };
+    let threw = null;
+    try {
+      await ensureTriggerItem({ deps: { gqlFn: gql, fsImpl: f.fs, configFile: '/fake/cfg.json', logger: silentLogger } });
+    } catch (e) { threw = e; }
+    check('rethrows the transient error', threw !== null && /502/.test(threw.message), String(threw && threw.message));
+    check('no create mutations fired', !calls.some(q => /create_group|create_item/.test(q)), JSON.stringify(calls.map(q => q.slice(0, 30))));
+    check('config untouched', f.writes.length === 0, JSON.stringify(f.writes));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

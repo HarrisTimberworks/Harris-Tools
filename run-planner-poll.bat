@@ -6,6 +6,9 @@ REM Quiet no-op otherwise. See docs\phase-3-manual-overrides-plan.md.
 
 cd /d C:\Users\chris\Harris-Tools
 for /f "delims=" %%i in (C:\Users\chris\Harris-Tools\.token) do set MONDAY_API_TOKEN=%%i
-set LOG=C:\Users\chris\Harris-Tools\logs\planner-%date:~-4%-%date:~4,2%-%date:~7,2%.log
+REM Locale-independent date (the %%date%% substring trick breaks if Windows
+REM regional short-date format ever changes — review finding 2026-06-11).
+for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd"') do set TODAY=%%i
+set LOG=C:\Users\chris\Harris-Tools\logs\planner-%TODAY%.log
 
 node scripts\planner-trigger.js --poll >> %LOG% 2>&1
