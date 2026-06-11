@@ -6,6 +6,18 @@ XML exports of the Windows Task Scheduler tasks that run the automation scripts 
 | --- | --- | --- | --- |
 | HTW Daily Rollups | `HTW-Daily-Rollups.xml` | Daily at 6:00 AM | `run-daily-rollups.bat` |
 | HTW Production Scheduler | `HTW-Production-Scheduler.xml` | Every 15 min | `run-scheduler.bat` |
+| HTW Planner - Poll | `HTW-Planner-Poll.xml` | Every 1 min | `run-planner-poll-hidden.vbs` → `run-planner-poll.bat` (Phase 3 on-demand trigger; no-op unless the ▶️ Planner Trigger item on the Manual Overrides board is set to "Run Requested") |
+| HTW Planner - Saturday | `HTW-Planner-Saturday.xml` | Saturday 6:00 PM | `run-planner-saturday-hidden.vbs` → `run-planner-saturday.bat` (full weekly plan + Capacity View + Weekly Briefing) |
+
+### Planner task notes (Phase 3, 2026-06-10)
+
+- Both planner tasks were registered with an **interactive token** (S4U registration
+  needs elevation): they run only while chris is logged on. To upgrade so they run
+  while logged out: Task Scheduler UI → task properties → "Run whether user is
+  logged on or not" (asks for the Windows password once), for each task. The `.vbs`
+  wrappers exist so the interactive token doesn't flash a console window every minute.
+- Logs: `logs\planner-YYYY-MM-DD.log` (one file per day, both tasks append).
+- Concurrency: `logs\planner.lock` (45-min stale-steal) + `MultipleInstancesPolicy=IgnoreNew`.
 
 ## Re-importing on a new machine
 

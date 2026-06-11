@@ -56,3 +56,35 @@ The Phase 1+2 code lives only on `claude/beautiful-villani-8d84a8`. Production a
 ## Out of scope (unchanged)
 
 Webhooks + button column (Phase 4), cloud VPS (Phase 4), SMTP email (monday relay suffices), future-week briefings (Phase 5), F.5a board automations (separately deferred by operator).
+
+---
+
+## Operator runbook (Bob / anyone)
+
+**To request a schedule re-plan:**
+
+1. Open the **🛠️ HTW Manual Overrides** board. Enter/edit override rows in the **Active** group as usual (or change nothing, if you just want fresh docs).
+2. In the **⚙️ Control** group, set **▶️ Planner Trigger**'s Status to **Run Requested**.
+3. Within ~1 minute the status flips to **Running** (planner working, ~2 min), then back to **Idle**.
+4. Read the result: each override row's Status is now **Applied** or **Conflict** (reason in the Conflict Reason column), the **📊 HTW Live Capacity View** and **📋 HTW Weekly Briefing** docs are freshly regenerated, and the trigger item carries an update with the run summary.
+
+**Status meanings on the trigger item:** `Idle` ready • `Run Requested` queued, picked up within a minute • `Running` in progress, don't re-request • `Error` the run failed — Chris gets a monday notification automatically; the previous docs/plan stay intact.
+
+**To retry a Conflict row:** fix the row, then flip its Status back to **Pending** and request a run.
+
+**Saturday 6:00 PM:** the planner runs by itself and posts fresh docs for Monday morning. No action needed.
+
+**Limits (Phase 3):** runs happen on Chris's machine while he's logged in (Phase 4 moves this to the cloud). If the trigger sits at Run Requested for more than a few minutes, the machine is off/asleep — it will run when it wakes.
+
+---
+
+## Build record — 2026-06-10/11 (overnight session)
+
+All deliverables landed same-session, registration last per operator directive:
+
+- **P3.1** `planner-trigger.js` (TDD, 56 checks): poll + scheduled modes, status lifecycle, lockfile with stale-steal, run-summary updates, conflict/failure notifications via `create_notification` (silent on clean success).
+- **P3.2** trigger surface live: ⚙️ Control group `group_mm47eq7n`, item `12248969189` on board 18413101550; `config/planner-trigger.json` persisted. Idempotent setup script (TDD, 15 checks).
+- **P3.3** `.bat` wrappers + `.vbs` hidden-window wrappers, rollup logging convention.
+- **Merge:** `claude/beautiful-villani-8d84a8` fast-forwarded into `main` (the production home; Task Scheduler must never point into a `.claude/worktrees/` path). Main's stale 5/1-era local edits preserved in `git stash` ("pre-Phase-2-merge"). Full suite green on main (22 files).
+- **Registration:** `HTW Planner - Poll` (every 1 min) + `HTW Planner - Saturday` (Sat 18:00), interactive token (S4U denied without elevation — upgrade path in task-scheduler/README.md), hidden via VBS, XMLs exported to task-scheduler/.
+- **Verification:** manual poll no-op (Idle) ✓; manual poll full run ✓ (83s, docs regenerated, summary update posted, Idle restored); unattended scheduled-task pickup test run overnight — see rolling handoff for the result.

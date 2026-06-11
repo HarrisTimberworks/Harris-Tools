@@ -253,26 +253,36 @@ if (require.main === module) {
     console.error('ERROR: MONDAY_API_TOKEN env var required');
     process.exit(1);
   }
-  const reb = require('./rebalance-schedule.js');
-  const { runPlanner } = require('./run-planner.js');
-  const { replaceCapacityViewBody } = require('./write-capacity-view.js');
-  const { writeWeeklyBriefing } = require('./write-weekly-briefing.js');
+  // Lazy-require the planner stack only when a run actually fires: the
+  // every-minute idle tick then loads nothing heavyweight and logs NOTHING
+  // (rebalance-schedule.js prints "Loaded overrides from..." at require
+  // time — at 1440 ticks/day that's pure log pollution). defaultGql from
+  // the writer module is side-effect-free at require.
+  const { defaultGql } = require('./write-capacity-view.js');
 
   runOnce({
     mode,
     deps: {
-      gqlFn: reb.gql,
-      runPlannerFn: (opts) => runPlanner({
-        ...opts,
-        deps: {
-          writeCapacityView: replaceCapacityViewBody,
-          writeWeeklyBriefing,
-        },
-      }),
+      gqlFn: defaultGql,
+      runPlannerFn: (opts) => {
+        const { runPlanner } = require('./run-planner.js');
+        const { replaceCapacityViewBody } = require('./write-capacity-view.js');
+        const { writeWeeklyBriefing } = require('./write-weekly-briefing.js');
+        return runPlanner({
+          ...opts,
+          deps: {
+            writeCapacityView: replaceCapacityViewBody,
+            writeWeeklyBriefing,
+          },
+        });
+      },
     },
   }).then(r => {
     if (r.planError || r.error) process.exitCode = 1;
-    if (!r.ran) console.log(`planner-trigger (${mode}): ${r.skipped}`);
+    // Idle poll ticks stay silent — the daily log only carries real runs.
+    if (!r.ran && (mode === 'scheduled' || process.env.VERBOSE === '1')) {
+      console.log(`planner-trigger (${mode}): ${r.skipped}`);
+    }
   }).catch(e => {
     console.error('planner-trigger fatal:', e);
     process.exit(1);
