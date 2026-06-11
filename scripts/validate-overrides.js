@@ -32,7 +32,7 @@
 // through validateAll is mandatory. Documented here so a future reader
 // doesn't think it's drift.
 
-const { getMondayOfWeek, parseISO, toISO } = require('./rebalance-schedule.js');
+const { getMondayOfWeek, parseISO, toISO, hardRuleViolation } = require('./rebalance-schedule.js');
 
 // Returns { valid: bool, reason: string|null }.
 // Strict: the row's pin week (toWeek if present, else fromWeek) must be ≤
@@ -186,6 +186,28 @@ function checkWindowMembership(row, jobWindows) {
   return { valid: true, reason: null };
 }
 
+// SMOKE FIX (2026-06-10). Returns { valid: bool, reason: string|null }.
+// The planner's PATCH-3 hard rules (rebalance-schedule.js hardRuleViolation)
+// THROW inside applyForceAssignments — a board force that violates one
+// crashes pass 2 after writeback already flipped the row to Applied. Hard
+// rules are a distinct tier from the lenient cross-training matrix (the
+// matrix is advisory; hard rules are planner-enforced exceptions), so the
+// validator rejects them up front. Skips pure clears (no force destination).
+// Missing subtype defaults to 'Commercial', mirroring the PL loader.
+function checkHardRule(row, plJobs) {
+  if (!row.toCrew || !row.toWeek) return { valid: true, reason: null };
+  const job = (plJobs || []).find(j => String(j.masterPmId) === String(row.jobMpmId));
+  const subtype = (job && job.subtype) || 'Commercial';
+  const hit = hardRuleViolation(row.toCrew, row.station, subtype, row.toWeek);
+  if (hit) {
+    return {
+      valid: false,
+      reason: `planner hard rule: ${hit} — the force would be rejected at apply time, so it is flagged here instead`,
+    };
+  }
+  return { valid: true, reason: null };
+}
+
 // Returns { valid: bool, reason: string|null, softWarning?: string }.
 // Lenient with checkbox: a row whose To Crew × To Week would exceed the
 // week's cap is rejected by default and accepted (with softWarning) when
@@ -310,6 +332,9 @@ function validateAll(rawRows, baselinePlan, plJobs, crewParents, jobWindows) {
     const f = checkFieldUnsupported(row);
     if (!f.valid) reasons.push(f.reason);
 
+    const h = checkHardRule(row, plJobs);
+    if (!h.valid) reasons.push(h.reason);
+
     const d = checkDeliveryDateConstraint(row, plJobs);
     if (!d.valid) reasons.push(d.reason);
 
@@ -347,6 +372,7 @@ module.exports = {
   checkConsistency,
   checkCapacity,
   checkFieldUnsupported,
+  checkHardRule,
   checkWindowMembership,
   validateAll,
   // Exposed for run-planner.js to reuse the same resolution logic when

@@ -774,6 +774,52 @@ function syntheticBaselinePlan() {
     check('reasons mention resolution failure', out.conflicts.every(c => /resolv|unknown|no match|unresolved/i.test(c.reason || '')), JSON.stringify(out.conflicts.map(c => c.reason)));
   }
 
+  console.log('\nTest 43: SMOKE FIX — planner hard rules reject at validation (force would crash apply)');
+  {
+    // Surfaced live 2026-06-10: validator accepted (Ken × Post Fin × Res job)
+    // per the lenient cross-training policy, but the planner's PATCH-3 hard
+    // rules THREW at applyForceAssignments — crashing pass 2 after writeback,
+    // leaving the board saying Applied with nothing applied. Hard rules are a
+    // distinct tier from the lenient matrix: anything that makes the planner
+    // throw must be a Conflict at validation time.
+    const plJobs = [
+      { id: 'PL-RES', masterPmId: 'MPM-RES', name: 'Res Job', delivery: '2026-06-26', subtype: 'Res - Face Frame' },
+      { id: 'PL-COM', masterPmId: 'MPM-COM', name: 'Com Job', delivery: '2026-06-26', subtype: 'Commercial' },
+    ];
+    const crewParents = [
+      ...CREW_PARENTS,
+      { parentId: 'CP-KEN-0622', crew: 'Ken', week: '2026-06-22' },
+    ];
+    const baseline = { mode: 'plan', placements: [], capacityGrid: {} };
+
+    // Ken × Post Fin × Res job → hard-rule Conflict.
+    const out1 = validateAll([rawRow({ rowId: 'HR1', jobMpmId: 'MPM-RES', station: 'Post Fin Cab Assembly',
+      toCrewParentId: 'CP-KEN-0622', toWeek: '2026-06-22' })], baseline, plJobs, crewParents);
+    check('Ken PostFin on Res job → conflict', out1.conflicts.length === 1 && out1.accepted.length === 0,
+      JSON.stringify({ a: out1.accepted.length, c: out1.conflicts.length }));
+    check('reason names the hard rule', /hard rule/i.test(out1.conflicts[0]?.reason || '') && /Commercial-only/.test(out1.conflicts[0]?.reason || ''),
+      out1.conflicts[0]?.reason);
+
+    // Same row on a Commercial job → no hard-rule objection → accepted.
+    const out2 = validateAll([rawRow({ rowId: 'HR2', jobMpmId: 'MPM-COM', station: 'Post Fin Cab Assembly',
+      toCrewParentId: 'CP-KEN-0622', toWeek: '2026-06-22' })], baseline, plJobs, crewParents);
+    check('Ken PostFin on Commercial job → accepted', out2.accepted.length === 1, JSON.stringify(out2.conflicts.map(c => c.reason)));
+
+    // Pure clear (no To side) → hard-rule check skips (nothing forced anywhere).
+    const out3 = validateAll([rawRow({ rowId: 'HR3', jobMpmId: 'MPM-RES', station: 'Post Fin Cab Assembly',
+      fromCrewParentId: 'CP-IAN-0525', fromWeek: '2026-05-25',
+      toCrewParentId: null, toWeek: null, hours: 0 })], baseline, plJobs, crewParents);
+    check('pure clear skips hard-rule check', out3.conflicts.every(c => !/hard rule/i.test(c.reason || '')),
+      JSON.stringify(out3.conflicts.map(c => c.reason)));
+
+    // Missing subtype defaults to Commercial (mirrors the PL loader default).
+    const plNoSubtype = [{ id: 'PL-X', masterPmId: 'MPM-X', name: 'X', delivery: '2026-06-26' }];
+    const out4 = validateAll([rawRow({ rowId: 'HR4', jobMpmId: 'MPM-X', station: 'Post Fin Cab Assembly',
+      toCrewParentId: 'CP-KEN-0622', toWeek: '2026-06-22' })], baseline, plNoSubtype, crewParents);
+    check('missing subtype treated as Commercial → accepted', out4.accepted.length === 1,
+      JSON.stringify(out4.conflicts.map(c => c.reason)));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

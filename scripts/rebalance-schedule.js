@@ -2166,6 +2166,10 @@ module.exports = {
   loadOverridesBoard,
   runPlan,
   runExecute,
+  // PATCH-3 hard rules, exported so validate-overrides.js can reject a
+  // force at validation time instead of letting applyForceAssignments
+  // throw mid-pass-2 (2026-06-10 smoke-test finding).
+  hardRuleViolation,
   translateOverrideRows,
   mergeForceAssignments,
   mergeCrewExclusions,

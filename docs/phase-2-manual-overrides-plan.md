@@ -237,6 +237,17 @@ Repeat for: **Job**, **Station**, **From Crew**, **From Week**, **To Crew**, **T
 
 Refuted (correctly): briefingWeekFor's Mon–Fri current-week semantics (documented decision §H.5), rename-before-replace ordering (D2 single-doc model), board-override cells carrying both 🔧 and *(pinned)* (board rows become forceAssignments — Test 16 anchors the coexistence), and "Section D steps not performed" (live dry-run done; smoke matrix is operator-gated, see below).
 
+### Live smoke test (2026-06-10, post-launch) — §D requirement met
+
+Two-row live test on the Manual Overrides board (move 8h McMorris PostFin Bob 6/22 → crew X 6/22, plus a deliberately-invalid 6/29 variant):
+
+- **Conflict path ✓** — the invalid row flipped to Conflict with both reasons (past delivery week + outside PostFin window) written to Conflict Reason.
+- **Caught a real bug** — the first valid-looking row targeted Ken, which violates a PATCH-3 **hard rule** (Ken PostFin is Commercial-only; McMorris is Res). The validator (lenient cross-training per locked spec) accepted it; the planner THREW at applyForceAssignments, crashing pass 2 *after* writeback — board said Applied, nothing applied, no outputs, silent death, previous good state preserved only by accident of ordering. **Two fixes landed (TDD):**
+  1. `checkHardRule` in validate-overrides.js — anything that would make the planner throw is now a validation Conflict (`planner hard rule: …`). Hard rules are a distinct tier from the advisory matrix; this does not violate the "cross-training lenient" locked decision.
+  2. Pass-2 guard in run-planner.js — a planner throw now aborts loudly, re-writes the previously-accepted rows back to Conflict carrying the planner's reason, persists nothing, skips outputs, and exits nonzero (spec Step 3 "abort, preserve previous good state, raise notification").
+- **Apply + 🔧 path ✓** — repointed to Ian (legal): row → Applied, 8h pinned to Ian, Bob auto-rebalanced 18.5 → 14.5, and the live Capacity View rendered `🔧 8 *(pinned)*` + `🔧 14.5` on Ian's cells. Note the wrench marks the whole destination cell-group (crew × week × job × station) — the auto-routed remainder is also downstream of the pin.
+- Cleanup: both test rows deleted, final `--plan` restored the clean state on board + docs.
+
 ### Known cosmetic items (deferred)
 
 - Plan/validation filenames use the UTC date; markdown artifacts use the local date. Around midnight UTC they differ by a day (`rebalance-plan-2026-06-11.json` vs `capacity-view-2026-06-10.md`). Pairing logic is internally consistent (both files the CLI pairs use UTC). Phase 5 polish.

@@ -161,7 +161,36 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   const finalOverrideRows = (boards.overrideRows || []).filter(r => acceptedIds.has(r.rowId));
   const finalBoards = { ...boards, overrideRows: finalOverrideRows };
   console.log(`\n--- Pass 2: final plan (${finalOverrideRows.length} accepted override row(s) applied) ---`);
-  const finalPlan = await _runPlan(finalBoards);
+
+  // SMOKE FIX (2026-06-10) — pass-2 guard, spec Step 3: "If the planner
+  // itself errors → abort, preserve previous good state, raise notification."
+  // Before this guard, a planner throw (e.g. a board force hitting a PATCH-3
+  // hard rule) killed the run AFTER writeback had flipped rows to Applied:
+  // the board lied, nothing persisted, no outputs, no loud signal. Now: the
+  // error is surfaced loudly, the accepted rows are re-written back as
+  // Conflict carrying the planner's reason, nothing is persisted (the
+  // previous plan/validation files and docs stay the good state), and the
+  // CLI exits nonzero via the planError marker.
+  let finalPlan;
+  try {
+    finalPlan = await _runPlan(finalBoards);
+  } catch (e) {
+    const msg = e.message || String(e);
+    console.log(`\n✗ PLANNER ERROR in pass 2 — run aborted, previous good state preserved: ${msg}`);
+    const failureFlip = {
+      accepted: [],
+      conflicts: validation.accepted.map(a => ({
+        rowId: a.rowId,
+        decision: 'conflict',
+        reason: `planner error during apply: ${msg}`,
+      })),
+    };
+    console.log(`  Flipping ${failureFlip.conflicts.length} previously-accepted row(s) to Conflict on the board...`);
+    const flip = await _writeRowDecisions(failureFlip, { gqlFn: _gqlFn, today: todayISO, dryRun: _dryRun });
+    console.log(`  written: ${flip.written}, skipped: ${flip.skipped}, errors: ${flip.errors.length}`);
+    console.log('  No plan/validation files written; Capacity View + Weekly Briefing not regenerated.');
+    return { baselinePlan, validation, planError: msg };
+  }
 
   // C5/C8 — derive the 🔧 tuple set BEFORE persisting validation, so the
   // on-disk override-validation JSON carries acceptedTuples for standalone
@@ -277,6 +306,8 @@ if (require.main === module) {
       writeCapacityView: replaceCapacityViewBody,
       writeWeeklyBriefing,
     },
+  }).then(result => {
+    if (result && result.planError) process.exitCode = 1;
   }).catch(e => {
     console.error(e);
     process.exit(1);

@@ -763,6 +763,58 @@ function makeFakeBoards() {
       result?.outputs?.acceptedTuples?.length === 1, JSON.stringify(result?.outputs));
   }
 
+  console.log('\nTest 17b: SMOKE FIX — pass-2 planner throw: loud abort, accepted rows flipped to Conflict, no persist, no outputs');
+  {
+    // Surfaced live 2026-06-10: a board force that violates a planner hard
+    // rule made pass 2 THROW after writeback already flipped the row to
+    // Applied — board lied, nothing persisted, no outputs, silent death.
+    // Spec Step 3: "If the planner itself errors → abort, preserve previous
+    // good state, raise notification." The orchestrator must catch the pass-2
+    // error, re-writeback the accepted rows as Conflict (with the planner's
+    // reason), skip persist + outputs, and resolve (not reject) with a
+    // planError marker the CLI can turn into a nonzero exit.
+    const stubs = makeOutputStubs();
+    const writebackCalls = [];
+    let pass = 0;
+    const deps = {
+      ...stubs.deps,
+      runPlan: async () => {
+        pass++;
+        if (pass === 1) return stubs.baselineReport;
+        throw new Error('forceAssignment violates hard rule: Ken on Post Fin Cab Assembly 2026-06-22 for SH - McMorris — Ken Post Fin is Commercial-only (subtype: Res - Face Frame)');
+      },
+      writeRowDecisions: async (validation, opts) => {
+        writebackCalls.push(JSON.parse(JSON.stringify(validation)));
+        return { written: (validation.accepted || []).length + (validation.conflicts || []).length, skipped: 0, errors: [] };
+      },
+    };
+    const fakeFs = makeFakeFs();
+    const captured = [];
+    const realLog = console.log; console.log = (...a) => captured.push(a.join(' '));
+    let result, threw = false;
+    try {
+      result = await runPlanner({ mode: 'plan', deps: { ...deps, fs: fakeFs.fs, logsDir: '/fake/logs' } });
+    } catch (e) {
+      threw = true;
+    } finally { console.log = realLog; }
+
+    check('runPlanner resolved (no unhandled rejection)', threw === false, '');
+    check('result.planError carries the planner message', /hard rule/.test(result?.planError || ''), JSON.stringify(result?.planError));
+    check('no plan/validation files persisted (previous good state preserved)',
+      !fakeFs.writes.some(w => /rebalance-plan-|override-validation-/.test(w.path)),
+      JSON.stringify(fakeFs.writes.map(w => w.path)));
+    check('no output writers called', stubs.calls.length === 0, JSON.stringify(stubs.calls.map(c => c.kind)));
+    check('writeback called twice (decisions, then failure flip)', writebackCalls.length === 2, `calls=${writebackCalls.length}`);
+    check('second writeback flips the accepted row to Conflict with the planner reason',
+      writebackCalls[1]?.accepted?.length === 0
+      && writebackCalls[1]?.conflicts?.length === 1
+      && writebackCalls[1].conflicts[0].rowId === 'R1'
+      && /hard rule/.test(writebackCalls[1].conflicts[0].reason || ''),
+      JSON.stringify(writebackCalls[1]));
+    const blob = captured.join('\n');
+    check('failure surfaced loudly in console', /✗.*[Pp]ass 2|PLANNER ERROR|planner error/i.test(blob), blob.slice(-500));
+  }
+
   console.log('\nTest 17: C8 — execute mode never touches writers or tuple derivation');
   {
     const stubs = makeOutputStubs();
