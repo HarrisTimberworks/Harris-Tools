@@ -201,6 +201,39 @@ These don't block design but need answers during the build:
 
 ---
 
+## Section H — C5–C8 build record (2026-06-10 session)
+
+C5 through C8 landed in one session (commits `b35e481` C5, `c99faf3` C6, `0b858e4` C7, C8 follows). Full suite: 20 test files, 838 checks, green. Live `DRY_RUN=1 node scripts/run-planner.js --plan` verified end-to-end against monday data: two passes, validation (0 rows — board empty), dry writeback, plan + validation persisted, `=== OUTPUTS ===` with Capacity View dry-replace (100 blocks read) and Weekly Briefing would-create.
+
+### Decisions settled during the build
+
+1. **Pure-clear 🔧 semantics (§D smoke note).** A pure-clear row wrenches every final-plan `(job × station)` cell whose crew×week hours-sum differs from the baseline plan — the cells the crewExclusion re-routed work into. Unchanged cells don't wrench. Requires both plans, so derivation runs inside `run-planner.js` and persists as `validation.acceptedTuples`; standalone writer CLIs read that via `tuplesFromPersistedValidation` (to-side-only fallback for pre-C8 files).
+2. **F.4 confirmed: no.** JSON `forceAssignments` never wrench — they render *(pinned)* only. Anchored by test (test-derive-override-tuples.js Test 10).
+3. **F.5b (stale 🔧) falls out free.** Tuples derive from the current run's accepted set; an Applied row that re-validates to Conflict contributes nothing, so its old cells lose the wrench with zero extra logic.
+4. **F.3 confirmed: lean (a).** Briefing doc auto-creates via `create_doc` into workspace 11761515 / Claude Handoffs folder 20251829 (introspection 2026-06-10 confirmed `CreateDocWorkspaceInput.folder_id` exists on API-Version `next`). Identity persists in `config/weekly-briefing-doc.json`; lost state or deleted doc → fresh create (orphan stays for manual cleanup).
+5. **Briefing week rule.** Sat/Sun (UTC) → next Monday (the Saturday-6pm scheduled run briefs the upcoming week); Mon–Fri → current week's Monday (mid-week on-demand briefs the week in progress).
+6. **Hermetic writers.** `runPlanner` only fires output writers injected via deps; the CLI entry wires the real ones. Unit tests can never accidentally mutate live docs even with a token in env.
+7. **Writer failure policy.** Writers independent; CV failure logs loudly (artifact path + recovery options) and the briefing still runs; `runPlanner` doesn't throw — plan/validation files are already saved and writers are re-runnable standalone.
+
+### Latent bug fixed en route
+
+**`forced` field-name mismatch.** The planner emits `forced: true` on pinned placements (rebalance-schedule.js:1091); the generator's pinned detection checked only `p.pinned || p.force` — fixture-only names — so *(pinned)* never rendered from a real plan JSON. Both detection sites fixed; regression tests anchor to the planner's canonical field. Same incident family as the 2026-05-25 `avail` bug; the live dry-run now shows `23 *(pinned)*` on Bob's R5-P2 CU force.
+
+### F.5a — operator recipe (monday native automations, NOT code)
+
+Column-edit detection on Applied rows can't be done in the planner (it only sees board state at run time, not edit events). Create these **custom automations on the Manual Overrides board (18413101550)** in the monday UI — one per input column:
+
+> When **Hours** changes, and only if **Status** is **Applied**, set **Status** to **Pending**
+
+Repeat for: **Job**, **Station**, **From Crew**, **From Week**, **To Crew**, **To Week**, **Allow Over-Cap**. (Skip Reason — it's commentary, not plan input.) Until these exist, the planner still re-validates Applied rows every run (Phase 1.1), so an edited Applied row gets re-checked on the next run anyway — the automations just make the Pending flip visible immediately.
+
+### Known cosmetic items (deferred)
+
+- Plan/validation filenames use the UTC date; markdown artifacts use the local date. Around midnight UTC they differ by a day (`rebalance-plan-2026-06-11.json` vs `capacity-view-2026-06-10.md`). Pairing logic is internally consistent (both files the CLI pairs use UTC). Phase 5 polish.
+- Same-key placements (e.g. one pinned + one auto-routed for the same job × station × crew × week) render as two table rows. Matches plan JSON reality; merge-display is Phase 5 polish if it bothers anyone.
+
+---
+
 ## Section G — Suggested fresh-chat opener for Phase 3 (when Phase 2 lands)
 
 > Resume Phase 3 of the Manual Overrides System build. Read `docs/phase-2-manual-overrides-plan.md` Section E (out-of-scope items) for the Phase 3 deliverable list. State: Phase 2 complete; branch `claude/beautiful-villani-8d84a8` is the active line; Capacity View + Weekly Briefing now regenerate automatically each --plan; `capacity-view-refresh` skill is no longer the daily path.
