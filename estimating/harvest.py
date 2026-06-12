@@ -35,10 +35,16 @@ def harvest_chests(chest_dir, *, line, source_date):
 
 
 def harvest_to_library(chest_dir, lib_path, *, line, source_date):
+    """Replace ONLY the harvested line's rows; rows of other lines and
+    'Both' are preserved untouched."""
     rows = harvest_chests(chest_dir, line=line, source_date=source_date)
-    library.write_factors(lib_path, rows)
+    existing = library.load_factors(lib_path)
+    kept = [r for r in existing if r.line != line]
+    library.write_factors(lib_path, kept + rows)
     library.append_changelog(lib_path, version=f"harvest-{source_date}",
                              author="harvest script",
-                             change=f"seeded {len(rows)} rows from "
-                                    f"{chest_dir}", date=source_date)
+                             change=f"re-seeded {len(rows)} line={line} rows "
+                                    f"from {chest_dir}; kept "
+                                    f"{len(kept)} other-line rows",
+                             date=source_date)
     return rows

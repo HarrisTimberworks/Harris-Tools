@@ -49,3 +49,18 @@ def test_harvest_names_file_on_parse_failure(make_chest, tmp_path):
     bad.write_bytes(b"\xef\xbb\xbfnot xml at all")
     with pytest.raises(RuntimeError, match="HTW-R 02 BAD"):
         harvest.harvest_chests(tmp_path, line="R", source_date="2026-06-10")
+
+
+def test_harvest_preserves_other_lines(make_chest, tmp_path):
+    make_chest("HTW-R 01 CASE & FF",
+               [{"subject": "R1", "unit": "EA", "uc": "1.00"}])
+    lib = tmp_path / "lib.xlsx"
+    library.create_library(lib)
+    commercial = library.FactorRow("C1", "C", "CASE", "LF", 9.0, "active",
+                                   "deep dive", "2026-06-12", "")
+    library.write_factors(lib, [commercial])
+    harvest.harvest_to_library(tmp_path, lib, line="R",
+                               source_date="2026-06-12")
+    loaded = {r.subject: r for r in library.load_factors(lib)}
+    assert set(loaded) == {"C1", "R1"}          # C row survived
+    assert loaded["C1"].line == "C"
