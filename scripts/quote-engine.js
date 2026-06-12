@@ -133,4 +133,34 @@ async function quoteRunPlan(boards, syntheticJob, { runPlanFn = runPlan, now = (
   return runPlanFn({ ...boards, jobs, crewParents }, { savePath: null });
 }
 
-module.exports = { loadQuotePolicy, lintQuotePolicy, POLICY_PATH, buildSyntheticJob, withSyntheticParents, quoteRunPlan };
+// ---------------------------------------------------------------------------
+// Feasibility: candidate run vs baseline run (spec §4.1 step 3)
+// ---------------------------------------------------------------------------
+// Expected placement total = station hours + 4 (the planner places Pack & Ship
+// and Delivery as flat 2h each in the delivery week).
+function assessCandidate(baseline, candidate, syntheticJob) {
+  const reasons = [];
+  const expected = Object.values(syntheticJob.hours).reduce((s, h) => s + h, 0) + 4;
+  const placed = (candidate.placements || [])
+    .filter(p => p.jobId === syntheticJob.id)
+    .reduce((s, p) => s + (p.hours || 0), 0);
+  if (placed + 0.01 < expected) {
+    reasons.push(`only ${Number(placed.toFixed(1))}h of ${Number(expected.toFixed(1))}h placed`);
+  }
+  for (const w of candidate.warnings || []) {
+    if (String(w).includes(syntheticJob.name)) reasons.push(String(w));
+  }
+  // Strict no-worse-than-baseline (diff key crew × week): a quote must not
+  // deepen ANY existing overload. Missing baseline slot ⇒ baseline over = 0.
+  for (const [crew, weeksObj] of Object.entries(candidate.capacityGrid || {})) {
+    for (const [week, slot] of Object.entries(weeksObj)) {
+      const baseOver = baseline.capacityGrid?.[crew]?.[week]?.over || 0;
+      if ((slot.over || 0) > baseOver + 0.01) {
+        reasons.push(`over-cap: ${crew} w/o ${week} — committed ${slot.committed}/${slot.avail}h (over by ${slot.over}h, baseline ${baseOver}h)`);
+      }
+    }
+  }
+  return { feasible: reasons.length === 0, reasons };
+}
+
+module.exports = { loadQuotePolicy, lintQuotePolicy, POLICY_PATH, buildSyntheticJob, withSyntheticParents, quoteRunPlan, assessCandidate };

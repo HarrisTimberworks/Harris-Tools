@@ -110,6 +110,40 @@ console.log('Test 6: quoteRunPlan — synthetic job actually PLACES (the silent-
   const base = await quoteRunPlan(emptyBoards(16), null);
   check('baseline has no QUOTE placements', !(base.placements || []).some(p => String(p.jobId).startsWith('QUOTE-')));
 
+  console.log('Test 9: assessCandidate — feasible when fully placed and no new over-cap');
+  const { assessCandidate } = require('./quote-engine.js');
+  const fakeJob = { id: 'QUOTE-1', name: 'QUOTE - x', hours: { eng: 10, panel: 0, bench: 0, prefin: 0, postfin: 0 } };
+  const baseRep = { placements: [], warnings: [], capacityGrid: { Chris: { '2026-07-06': { avail: 15, committed: 12, over: 0 } } } };
+  const goodRep = { placements: [{ jobId: 'QUOTE-1', hours: 10 }, { jobId: 'QUOTE-1', hours: 2 }, { jobId: 'QUOTE-1', hours: 2 }],
+    warnings: [], capacityGrid: { Chris: { '2026-07-06': { avail: 15, committed: 15, over: 0 } } } };
+  check('clean fit is feasible', assessCandidate(baseRep, goodRep, fakeJob).feasible === true,
+    JSON.stringify(assessCandidate(baseRep, goodRep, fakeJob).reasons));
+
+  console.log('Test 10: under-placement is infeasible with a named reason');
+  const shortRep = { ...goodRep, placements: [{ jobId: 'QUOTE-1', hours: 6 }] };
+  const shortRes = assessCandidate(baseRep, shortRep, fakeJob);
+  check('infeasible', shortRes.feasible === false);
+  check('reason names the shortfall', shortRes.reasons[0].includes('6'), shortRes.reasons[0]);
+
+  console.log('Test 11: STRICT over-cap diff — growing an existing overload is infeasible (spec §4.1)');
+  const baseOver = { placements: [], warnings: [], capacityGrid: { Bob: { '2026-07-06': { avail: 30, committed: 33, over: 3 } } } };
+  const worseOver = { placements: [{ jobId: 'QUOTE-1', hours: 14 }], warnings: [],
+    capacityGrid: { Bob: { '2026-07-06': { avail: 30, committed: 55, over: 25 } } } };
+  const overRes = assessCandidate(baseOver, worseOver, fakeJob);
+  check('grown over-cap infeasible', overRes.feasible === false);
+  check('reason names crew+week+magnitude', /Bob.*2026-07-06/.test(overRes.reasons.join(' ')), overRes.reasons.join(' | '));
+
+  console.log('Test 12: pre-existing over-cap that does NOT grow is tolerated');
+  const sameOver = { placements: [{ jobId: 'QUOTE-1', hours: 14 }], warnings: [],
+    capacityGrid: { Bob: { '2026-07-06': { avail: 30, committed: 33, over: 3 } } } };
+  check('unchanged baseline overload tolerated', assessCandidate(baseOver, sameOver, fakeJob).feasible === true);
+
+  console.log('Test 13: a warning naming the quote job is infeasible');
+  const warnRep = { ...goodRep, warnings: ['Job QUOTE - x: 4h unplaced at Post Fin Cab Assembly'] };
+  check('quote-named warning rejects', assessCandidate(baseRep, warnRep, fakeJob).feasible === false);
+  check('unrelated warnings ignored',
+    assessCandidate(baseRep, { ...goodRep, warnings: ['Job SciTech has no delivery date — skipping'] }, fakeJob).feasible === true);
+
   console.log(failures.length ? `\n❌ ${failures.length}/${checks} FAILED` : `\n✅ all ${checks} checks passed`);
   process.exit(failures.length ? 1 : 0);
 })();
