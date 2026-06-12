@@ -402,6 +402,13 @@
     <p class="subtitle">Enter job details to generate an estimated delivery date and production milestone schedule.<br>Confirm all dates with the PM before communicating to clients.</p>
   </div>
 
+  <div style="background:#C0392B;color:#fff;padding:18px 22px;border-radius:10px;margin:0 0 24px;font-size:15px;line-height:1.5;">
+    <strong>⚠ This calculator was retired in April 2026.</strong><br>
+    The dates below are computed from the old production model and do <em>not</em> reflect current shop load.
+    Quote lead times via the <strong>💬 Quotes</strong> group on the monday.com Manual Overrides board
+    (see the Operations Manual, "Get a lead-time quote").
+  </div>
+
   <div class="card">
     <div class="card-label">01 — Job type</div>
     <div class="field">
@@ -675,6 +682,13 @@
 
   document.getElementById('startdate').value = new Date().toISOString().split('T')[0];
   calc();
+
+  // Retired 2026-06: V2 lives on the monday Manual Overrides board (Quotes group).
+  document.querySelectorAll('input, select, .seg-btn').forEach(el => {
+    el.disabled = true;
+    el.style.opacity = '0.5';
+    el.style.pointerEvents = 'none';
+  });
 </script>
 </body>
 </html>
