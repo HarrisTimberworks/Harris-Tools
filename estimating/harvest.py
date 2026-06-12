@@ -5,7 +5,7 @@ import re
 
 from . import btx, library
 
-CHEST_GLOB = "HTW-? [0-9][0-9] *.btx"
+CHEST_GLOB = "HTW-[RC] [0-9][0-9] *.btx"
 CATEGORY_RE = re.compile(r"^HTW-[RC] \d\d (.+)$")
 
 
@@ -13,7 +13,10 @@ def harvest_chests(chest_dir, *, line, source_date):
     rows = []
     pattern = os.path.join(str(chest_dir), CHEST_GLOB)
     for path in sorted(glob.glob(pattern)):
-        ts = btx.read_toolset(path)
+        try:
+            ts = btx.read_toolset(path)
+        except Exception as e:
+            raise RuntimeError(f"failed parsing {path}: {e}") from e
         m = CATEGORY_RE.match(ts.title)
         category = m.group(1) if m else ts.title
         for tool in ts.tools:

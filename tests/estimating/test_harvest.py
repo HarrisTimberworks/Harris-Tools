@@ -1,3 +1,5 @@
+import pytest
+
 from estimating import harvest, library
 
 
@@ -40,3 +42,10 @@ def test_end_to_end_harvest_to_xlsx(make_chest, tmp_path):
     loaded = library.load_factors(lib)
     assert loaded[0].subject == "A"
     assert library.latest_version(lib) == "harvest-2026-06-10"
+
+
+def test_harvest_names_file_on_parse_failure(make_chest, tmp_path):
+    bad = tmp_path / "HTW-R 02 BAD.btx"
+    bad.write_bytes(b"\xef\xbb\xbfnot xml at all")
+    with pytest.raises(RuntimeError, match="HTW-R 02 BAD"):
+        harvest.harvest_chests(tmp_path, line="R", source_date="2026-06-10")
