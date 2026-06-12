@@ -1857,9 +1857,12 @@ async function runPlan(boards, opts = {}) {
     placements: allPlacements,
     finishingCycleReport,
     finishDateWritebacks,
-    existingSubitemIdsToDelete: existingSubs
-      .filter(s => activeJobs.some(j => j.masterPmId === s.masterPmId))
-      .map(s => s.id),
+    // AUDIT FIX (2026-06-11): delete only where this plan holds a
+    // replacement — see computeSubitemDeletes. The old activeJobs match had
+    // two data-loss vectors: null===null matched every UNLINKED subitem on
+    // the board, and active-but-unplanned jobs (missing delivery, all
+    // windows past) lost their subitems with nothing re-created.
+    existingSubitemIdsToDelete: computeSubitemDeletes(existingSubs, allPlacements),
   };
 
   // Build visual capacity summary
@@ -2036,9 +2039,30 @@ async function runPlan(boards, opts = {}) {
 // reverse-sorted order. See 2026-05-10 incident commit body for the bug
 // this prevents — a `.bak` file in logs/ caused execute() to load stale
 // data and start deleting subitems before TaskStop fired.
+// AUDIT FIX (2026-06-11) — execute delete-guard. Delete a subitem ONLY when
+// its job actually received placements in THIS plan: full-overwrite applies
+// solely where we hold a replacement. Null/missing Master-PM links never
+// match anything (the old null===null path queued every unlinked subitem on
+// the board for deletion). Complete-job records and active-but-unplanned
+// jobs are preserved.
+function computeSubitemDeletes(existingSubs, placements) {
+  const replanned = new Set(
+    (placements || [])
+      .map(p => p.masterPmId)
+      .filter(id => id !== null && id !== undefined)
+      .map(String));
+  return (existingSubs || [])
+    .filter(s => s.masterPmId !== null && s.masterPmId !== undefined && replanned.has(String(s.masterPmId)))
+    .map(s => s.id);
+}
+
 function findLatestPlanFile(logsDir) {
+  // AUDIT FIX (2026-06-11): strict date pattern only. The loose
+  // startsWith/endsWith filter let 'rebalance-plan-pre-backfill-snapshot.json'
+  // sort lexically after every dated plan ('p' > '2') and become the file the
+  // next --execute would load.
   const files = fs.readdirSync(logsDir)
-    .filter(f => f.startsWith('rebalance-plan-') && f.endsWith('.json'))
+    .filter(f => /^rebalance-plan-\d{4}-\d{2}-\d{2}\.json$/.test(f))
     .sort()
     .reverse();
   return files.length > 0 ? files[0] : null;
@@ -2245,6 +2269,8 @@ module.exports = {
   computeRemainingHours,
   isReadyToShip,
   STATION_LABEL_TO_KEY,
+  // Audit fixes (2026-06-11).
+  computeSubitemDeletes,
   // Overrides config exported for tests (synthetic forceAssignment injection
   // in test-force-unplaced-accounting.js — getForceAssignments falls back to
   // OVERRIDES.forceAssignments when no runPlan merge is active).

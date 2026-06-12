@@ -1,6 +1,6 @@
 # 🎯 HTW Cross-Training + Routing Matrix
 
-**Last updated:** 2026-04-24
+**Last updated:** 2026-06-11
 **Authority:** This is the single source of truth for crew station assignments. When this conflicts with other docs or script source, this wins. Update this doc FIRST when roles/skills change, then propagate to scripts.
 
 **Files that reference this matrix (keep in sync):**
@@ -312,14 +312,24 @@ When this matrix changes, update:
 
 ### `scripts/schedule-production-jobs.js`
 
+Synced 2026-06-11 (Ian departure). Identical to `rebalance-schedule.js` ROUTING — parity enforced by `scripts/test-scheduler-ian-departure.js`.
+
 ```javascript
 const ROUTING = {
-  'Res - Face Frame': { 'Engineering': ['Chris'], 'Panel Processing': ['Ken'], 'Benchwork': ['Spencer'], 'Pre Fin Cab Assembly': ['Spencer'], 'Post Fin Cab Assembly': ['Ian', 'Bob'], 'Pack & Ship': ['Paisios'], 'Delivery': ['Paisios'] },
-  'Res - Frameless': { 'Engineering': ['Chris'], 'Panel Processing': ['Ken'], 'Benchwork': ['Ian'], 'Pre Fin Cab Assembly': ['Ian'], 'Post Fin Cab Assembly': ['Ian', 'Bob'], 'Pack & Ship': ['Paisios'], 'Delivery': ['Paisios'] },
-  'Commercial':      { 'Engineering': ['Jonathan'], 'Panel Processing': ['Ken'], 'Benchwork': ['Ian'], 'Pre Fin Cab Assembly': ['Ian'], 'Post Fin Cab Assembly': ['Ian', 'Bob'], 'Pack & Ship': ['Paisios'], 'Delivery': ['Paisios'] },
-  'Countertop/Surface': { 'Engineering': ['Jonathan'], 'Panel Processing': ['Ken'], 'Benchwork': ['Ian'], 'Pre Fin Cab Assembly': ['Ian'], 'Post Fin Cab Assembly': ['Ian', 'Bob'], 'Pack & Ship': ['Paisios'], 'Delivery': ['Paisios'] },
-  'Mixed':           { 'Engineering': ['Chris'], 'Panel Processing': ['Ken'], 'Benchwork': ['Spencer'], 'Pre Fin Cab Assembly': ['Spencer'], 'Post Fin Cab Assembly': ['Ian', 'Bob'], 'Pack & Ship': ['Paisios'], 'Delivery': ['Paisios'] },
+  'Res - Face Frame': { 'Engineering': ['Chris'], 'Panel Processing': ['Ken'], 'Benchwork': ['Bob'], 'Pre Fin Cab Assembly': ['Spencer'], 'Post Fin Cab Assembly': ['Bob'], 'Pack & Ship': ['Paisios'], 'Delivery': ['Paisios'] },
+  'Res - Frameless': { 'Engineering': ['Chris'], 'Panel Processing': ['Ken'], 'Benchwork': ['Bob'], 'Pre Fin Cab Assembly': ['Spencer'], 'Post Fin Cab Assembly': ['Bob'], 'Pack & Ship': ['Paisios'], 'Delivery': ['Paisios'] },
+  'Commercial':      { 'Engineering': ['Jonathan'], 'Panel Processing': ['Ken'], 'Benchwork': ['Bob'], 'Pre Fin Cab Assembly': ['Spencer'], 'Post Fin Cab Assembly': ['Bob'], 'Pack & Ship': ['Paisios'], 'Delivery': ['Paisios'] },
+  'Countertop/Surface': { 'Engineering': ['Jonathan'], 'Panel Processing': ['Ken'], 'Benchwork': ['Bob'], 'Pre Fin Cab Assembly': ['Spencer'], 'Post Fin Cab Assembly': ['Bob'], 'Pack & Ship': ['Paisios'], 'Delivery': ['Paisios'] },
+  'Mixed':           { 'Engineering': ['Chris'], 'Panel Processing': ['Ken'], 'Benchwork': ['Bob'], 'Pre Fin Cab Assembly': ['Spencer'], 'Post Fin Cab Assembly': ['Bob'], 'Pack & Ship': ['Paisios'], 'Delivery': ['Paisios'] },
 };
+```
+
+Its `hardRuleViolation` carries the same week-gated departure rule as the rebalancer:
+
+```javascript
+if (crew === 'Ian' && week >= '2026-06-11') {
+  return 'Ian left the team effective 2026-06-11';
+}
 ```
 
 ### `scripts/rebalance-schedule.js`
@@ -329,34 +339,46 @@ Uses both `ROUTING` (above) and `SECONDARY`:
 ```javascript
 const SECONDARY = {
   'Res - Face Frame': {
+    'Benchwork': ['Spencer', 'Jonathan'],
+    'Pre Fin Cab Assembly': ['Bob'],
+    'Post Fin Cab Assembly': ['Paisios', 'Spencer'],
     'Engineering': ['Paisios', 'Jonathan'],
-    'Benchwork': ['Ian', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly': ['Ian', 'Bob', 'Paisios'],
-    'Post Fin Cab Assembly': ['Spencer', 'Paisios'],
+    'Panel Processing': ['Bob'],
+    'Pack & Ship': ['Spencer', 'Bob', 'Jonathan'],
+    'Delivery': ['Spencer', 'Bob', 'Jonathan'],
   },
   'Res - Frameless': {
-    'Engineering': ['Paisios', 'Jonathan'],
-    'Benchwork': ['Spencer', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly': ['Spencer', 'Bob', 'Paisios'],
-    'Post Fin Cab Assembly': ['Spencer', 'Paisios'],
-    'Panel Processing': ['Ian', 'Bob'],
+    'Benchwork': ['Spencer', 'Jonathan'],
+    'Pre Fin Cab Assembly': ['Bob'],
+    'Post Fin Cab Assembly': ['Paisios', 'Spencer'],
+    'Panel Processing': ['Bob'],
+    'Engineering': ['Paisios', 'Jonathan', 'Rob'],  // Rob = fill-only tertiary per §7
+    'Pack & Ship': ['Spencer', 'Bob', 'Jonathan'],
+    'Delivery': ['Spencer', 'Bob', 'Jonathan'],
   },
   'Commercial': {
-    'Benchwork': ['Spencer', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly': ['Spencer', 'Bob', 'Paisios', 'Ken'],
-    'Post Fin Cab Assembly': ['Spencer', 'Paisios', 'Ken'],
-    'Panel Processing': ['Ian', 'Bob'],
+    'Benchwork': ['Spencer', 'Jonathan'],
+    'Pre Fin Cab Assembly': ['Bob'],
+    'Post Fin Cab Assembly': ['Paisios', 'Spencer', 'Ken'],  // Ken OK for commercial PostFin
+    'Panel Processing': ['Bob'],
+    'Pack & Ship': ['Spencer', 'Bob', 'Jonathan'],
+    'Delivery': ['Spencer', 'Bob', 'Jonathan'],
   },
   'Countertop/Surface': {
-    'Benchwork': ['Bob', 'Spencer'],
-    'Post Fin Cab Assembly': ['Spencer', 'Paisios'],
+    'Benchwork': ['Spencer', 'Jonathan'],
+    'Pre Fin Cab Assembly': ['Bob'],
+    'Post Fin Cab Assembly': ['Paisios', 'Spencer'],
     'Panel Processing': ['Bob'],
+    'Pack & Ship': ['Spencer', 'Bob', 'Jonathan'],
+    'Delivery': ['Spencer', 'Bob', 'Jonathan'],
   },
   'Mixed': {
+    'Benchwork': ['Spencer', 'Jonathan'],
+    'Pre Fin Cab Assembly': ['Bob'],
+    'Post Fin Cab Assembly': ['Paisios', 'Spencer'],
     'Engineering': ['Paisios', 'Jonathan'],
-    'Benchwork': ['Ian', 'Bob', 'Paisios'],
-    'Pre Fin Cab Assembly': ['Ian', 'Bob', 'Paisios'],
-    'Post Fin Cab Assembly': ['Spencer', 'Paisios'],
+    'Pack & Ship': ['Spencer', 'Bob', 'Jonathan'],
+    'Delivery': ['Spencer', 'Bob', 'Jonathan'],
   },
 };
 ```
@@ -380,6 +402,7 @@ Uses a combined MATRIX with Primary / Secondary flags — if this doc changes, p
 | 2026-04-23 | Added Res-FL Engineering priority ladder | Critical-path edge case |
 | 2026-04-24 | Removed Ken from PreFin Secondary lists for Res-FF, Res-FL, and Mixed | Internal inconsistency — Hard Rule #6 and Ken's profile both specify Commercial-only for PreFin, but the Secondary tables for non-Commercial subtypes incorrectly listed Ken as a fallback. Hard rule wins; tables now match. Updated SECONDARY object in source-code mirror to match. |
 | 2026-05-10 | Added Section 13 — System Reference (board + column IDs) | Phase 1 B1 — Manual Overrides board created (18413101550), need durable lookup for board/column/group/dropdown IDs that the planner read pipeline (B4+) will consume |
+| 2026-06-11 | Propagated Ian departure to `schedule-production-jobs.js` (ROUTING rewrite, week-gated hard rule, require.main guard + exports); refreshed §11 source mirrors to match live source | Commit 816c8ce updated `rebalance-schedule.js` and §1/§3–§5 here but missed the 15-min scheduler — any job flipped to "Ready to Schedule" would have created Crew Allocation subitems assigned to departed Ian. Covered by `scripts/test-scheduler-ian-departure.js` (incl. ROUTING + hard-rule parity sweep vs rebalancer). |
 
 ---
 

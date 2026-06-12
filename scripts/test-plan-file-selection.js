@@ -98,6 +98,23 @@ console.log('\nTest 5: only non-.json siblings present → null (no real plan to
   } finally { cleanup(dir); }
 }
 
+console.log('\nTest 6: AUDIT FIX — non-date suffixes never selected (snapshot/copy names sort after dates)');
+{
+  // 2026-06-11 audit: logs/rebalance-plan-pre-backfill-snapshot.json sorted
+  // lexically AFTER every dated plan ('p' > '2') and would have been fed to
+  // the next --execute. Only strict rebalance-plan-YYYY-MM-DD.json qualifies.
+  const dir = mkTmpDir();
+  try {
+    fs.writeFileSync(path.join(dir, 'rebalance-plan-2026-06-12.json'), '{}');
+    fs.writeFileSync(path.join(dir, 'rebalance-plan-pre-backfill-snapshot.json'), '{}');
+    fs.writeFileSync(path.join(dir, 'rebalance-plan-2026-06-11-copy.json'), '{}');
+    const result = findLatestPlanFile(dir);
+    check('strict date name wins over snapshot/copy names',
+      result === 'rebalance-plan-2026-06-12.json',
+      `got: ${result}`);
+  } finally { cleanup(dir); }
+}
+
 console.log();
 if (failures.length > 0) {
   console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

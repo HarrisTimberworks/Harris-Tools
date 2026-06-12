@@ -704,6 +704,9 @@ function makeFakeBoards() {
     const blob = captured.join('\n');
     check('console prints === OUTPUTS === section', /=== OUTPUTS ===/.test(blob), blob.slice(-600));
     check('result.outputs has both writer results', result?.outputs?.capacityView?.ok === true && result?.outputs?.weeklyBriefing?.ok === true, JSON.stringify(result?.outputs));
+    // AUDIT FIX: config lint runs on every --plan and lands in the result.
+    check('console prints === CONFIG LINT === section', /=== CONFIG LINT ===/.test(blob), blob.slice(0, 400));
+    check('result carries configLint { errors, warnings }', Array.isArray(result?.configLint?.errors) && Array.isArray(result?.configLint?.warnings), JSON.stringify(result?.configLint));
   }
 
   console.log('\nTest 14: C8 — DRY_RUN=1 propagates dryRun:true to both writers');
@@ -815,6 +818,46 @@ function makeFakeBoards() {
     check('failure surfaced loudly in console', /✗.*[Pp]ass 2|PLANNER ERROR|planner error/i.test(blob), blob.slice(-500));
   }
 
+  console.log('\nTest 5b: AUDIT FIX — execute refuses a plan older than 24h unless --force');
+  {
+    const mkDeps = (generatedAt) => {
+      const fakeFs = makeFakeFs();
+      const planContent = JSON.stringify({ mode: 'plan', generatedAt, placements: [{ crew: 'Bob' }] });
+      fakeFs.fs.writeFileSync(path.join('/fake/logs', 'rebalance-plan-2026-06-10.json'), planContent);
+      const calls = [];
+      return {
+        calls,
+        deps: {
+          loadAll: async () => makeFakeBoards(),
+          runExecute: async (plan) => { calls.push('runExecute'); return { ok: true }; },
+          findLatestPlanFile: () => 'rebalance-plan-2026-06-10.json',
+          fs: fakeFs.fs, logsDir: '/fake/logs',
+          now: () => new Date('2026-06-12T20:00:00Z'),
+        },
+      };
+    };
+
+    // Stale (generated 2 days before now) → refuses.
+    const stale = mkDeps('2026-06-10T20:00:00Z');
+    let threw = null;
+    const realLog = console.log; console.log = () => {};
+    try { await runPlanner({ mode: 'execute', deps: stale.deps }); } catch (e) { threw = e; } finally { console.log = realLog; }
+    check('stale plan → throws with age + remedy', threw !== null && /old|stale/i.test(threw.message) && /--force|--plan/.test(threw.message), String(threw && threw.message));
+    check('runExecute NOT called for stale plan', !stale.calls.includes('runExecute'), JSON.stringify(stale.calls));
+
+    // Stale + force → executes.
+    const forced = mkDeps('2026-06-10T20:00:00Z');
+    console.log = () => {};
+    try { await runPlanner({ mode: 'execute', options: { force: true }, deps: forced.deps }); } finally { console.log = realLog; }
+    check('stale + force → executes', forced.calls.includes('runExecute'), JSON.stringify(forced.calls));
+
+    // Fresh (3 hours old) → executes.
+    const fresh = mkDeps('2026-06-12T17:00:00Z');
+    console.log = () => {};
+    try { await runPlanner({ mode: 'execute', deps: fresh.deps }); } finally { console.log = realLog; }
+    check('fresh plan → executes', fresh.calls.includes('runExecute'), JSON.stringify(fresh.calls));
+  }
+
   console.log('\nTest 16b: STATIONS-COMPLETE — derived Ready to Ship status flips qualifying jobs (dryRun-aware)');
   {
     // A job whose every formula>0 station is marked done on the board gets
@@ -835,6 +878,12 @@ function makeFakeBoards() {
           formulaHours: { eng: 4, panel: 0, bench: 0, prefin: 0, postfin: 0 },
           stationsComplete: ['Eng'],
           hours: { eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 } },
+        // AUDIT FIX — intake flip (legacy 15-min scheduler retired): a Ready
+        // to Schedule job that received placements flips to Scheduled.
+        { id: 'PL-INTAKE', masterPmId: 'MPM-INTAKE', name: 'New Job', delivery: '2026-07-10', status: 'Ready to Schedule',
+          formulaHours: { eng: 4, panel: 8, bench: 10, prefin: 4, postfin: 5 },
+          stationsComplete: [],
+          hours: { eng: 4, panel: 8, bench: 10, prefin: 4, postfin: 5 } },
       ];
       return b;
     };
@@ -850,7 +899,9 @@ function makeFakeBoards() {
       try {
         await runPlanner({ mode: 'plan', deps: {
           loadAll: async () => mkBoards(),
-          runPlan: async () => (++pass, { mode: 'plan', placements: [], capacityGrid: {}, warnings: [] }),
+          runPlan: async () => (++pass, { mode: 'plan',
+            placements: [{ masterPmId: 'MPM-INTAKE', jobId: 'PL-INTAKE', crew: 'Bob', week: '2026-06-15', station: 'Benchwork', hours: 10 }],
+            capacityGrid: {}, warnings: [] }),
           validateAll: () => ({ accepted: [], conflicts: [] }),
           writeRowDecisions: async () => ({ written: 0, skipped: 0, errors: [] }),
           gqlFn: stubGql,
@@ -866,6 +917,11 @@ function makeFakeBoards() {
     const live = await run(false);
     const statusFlips = live.gqlCalls.filter(c => /change_multiple_column_values/.test(c.q) && /Ready to Ship/.test(JSON.stringify(c.v)));
     check('exactly one flip (PL-RTS only)', statusFlips.length === 1, JSON.stringify(live.gqlCalls.map(c => c.v)));
+    const intakeFlips = live.gqlCalls.filter(c => /change_multiple_column_values/.test(c.q)
+      && /Scheduled/.test(JSON.stringify(c.v)) && !/Ready to Ship/.test(JSON.stringify(c.v)));
+    check('intake flip: PL-INTAKE (Ready to Schedule + placed) → Scheduled',
+      intakeFlips.length === 1 && String(intakeFlips[0]?.v?.item) === 'PL-INTAKE',
+      JSON.stringify(intakeFlips.map(c => c.v)));
     check('flip targets PL-RTS on the Production Load board',
       String(statusFlips[0]?.v?.item) === 'PL-RTS' && String(statusFlips[0]?.v?.board) === '18407601557',
       JSON.stringify(statusFlips[0]?.v));

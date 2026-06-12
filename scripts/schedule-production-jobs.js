@@ -84,49 +84,55 @@ const BOB_START_DATE = '2026-05-18';
 const DEFAULT_FINISHING_DAYS = 7;
 
 // Routing matrix: [subtype][station] => array of Primary crew names
+// 2026-06-11 — Ian departed (moved to North Carolina). New chains per Chris:
+//   PostFin: Bob > Paisios > Spencer > Ken(Commercial-only via hard rule)
+//   Bench:   Bob > Spencer > Jonathan
+//   PreFin:  Spencer > Bob
+// Applied uniformly across subtypes. Keep in sync with rebalance-schedule.js
+// ROUTING and matrix doc §3.
 const ROUTING = {
   'Res - Face Frame': {
     'Engineering': ['Chris'],
     'Panel Processing': ['Ken'],
-    'Benchwork': ['Spencer'],
+    'Benchwork': ['Bob'],
     'Pre Fin Cab Assembly': ['Spencer'],
-    'Post Fin Cab Assembly': ['Ian', 'Bob'],
+    'Post Fin Cab Assembly': ['Bob'],
     'Pack & Ship': ['Paisios'],
     'Delivery': ['Paisios'],
   },
   'Res - Frameless': {
     'Engineering': ['Chris'],
     'Panel Processing': ['Ken'],
-    'Benchwork': ['Ian'],
-    'Pre Fin Cab Assembly': ['Ian'],
-    'Post Fin Cab Assembly': ['Ian', 'Bob'],
+    'Benchwork': ['Bob'],
+    'Pre Fin Cab Assembly': ['Spencer'],
+    'Post Fin Cab Assembly': ['Bob'],
     'Pack & Ship': ['Paisios'],
     'Delivery': ['Paisios'],
   },
   'Commercial': {
     'Engineering': ['Jonathan'],
     'Panel Processing': ['Ken'],
-    'Benchwork': ['Ian'],
-    'Pre Fin Cab Assembly': ['Ian'],
-    'Post Fin Cab Assembly': ['Ian', 'Bob'],
+    'Benchwork': ['Bob'],
+    'Pre Fin Cab Assembly': ['Spencer'],
+    'Post Fin Cab Assembly': ['Bob'],
     'Pack & Ship': ['Paisios'],
     'Delivery': ['Paisios'],
   },
   'Countertop/Surface': {
     'Engineering': ['Jonathan'],
     'Panel Processing': ['Ken'],
-    'Benchwork': ['Ian'],
-    'Pre Fin Cab Assembly': ['Ian'],
-    'Post Fin Cab Assembly': ['Ian', 'Bob'],
+    'Benchwork': ['Bob'],
+    'Pre Fin Cab Assembly': ['Spencer'],
+    'Post Fin Cab Assembly': ['Bob'],
     'Pack & Ship': ['Paisios'],
     'Delivery': ['Paisios'],
   },
   'Mixed': {
     'Engineering': ['Chris'],
     'Panel Processing': ['Ken'],
-    'Benchwork': ['Spencer'],
+    'Benchwork': ['Bob'],
     'Pre Fin Cab Assembly': ['Spencer'],
-    'Post Fin Cab Assembly': ['Ian', 'Bob'],
+    'Post Fin Cab Assembly': ['Bob'],
     'Pack & Ship': ['Paisios'],
     'Delivery': ['Paisios'],
   },
@@ -148,11 +154,6 @@ const API_URL = 'https://api.monday.com/v2';
 const RATE_LIMIT_MS = 200;
 const DRY_RUN = process.env.DRY_RUN === '1';
 const TOKEN = process.env.MONDAY_API_TOKEN;
-
-if (!DRY_RUN && !TOKEN) {
-  console.error('ERROR: MONDAY_API_TOKEN not set.');
-  process.exit(1);
-}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -231,6 +232,11 @@ function weeksInRange(startMonday, endMonday) {
 // Returns null if OK, or a string describing the violation.
 // Mirrors rebalance-schedule.js HARD_RULES (matrix doc §5).
 function hardRuleViolation(crew, station, subtype, week) {
+  // Departures: week-gated so historical re-validation of pre-departure
+  // rows stays valid.
+  if (crew === 'Ian' && week >= '2026-06-11') {
+    return 'Ian left the team effective 2026-06-11';
+  }
   if (crew === 'Ken' && station === 'Benchwork') {
     return 'Ken never does Benchwork';
   }
@@ -685,7 +691,24 @@ async function main() {
   console.log('\nDone.');
 }
 
-main().catch(e => {
-  console.error('Fatal:', e.message);
-  process.exit(1);
-});
+// Exports so tests can verify routing/hard rules without triggering CLI
+// entry (same pattern as rebalance-schedule.js). CLI invocations
+// (require.main === module) keep the original token check + main().
+module.exports = {
+  ROUTING,
+  CREW_USER_ID,
+  BOB_START_DATE,
+  hardRuleViolation,
+  calculateWindows,
+};
+
+if (require.main === module) {
+  if (!DRY_RUN && !TOKEN) {
+    console.error('ERROR: MONDAY_API_TOKEN not set.');
+    process.exit(1);
+  }
+  main().catch(e => {
+    console.error('Fatal:', e.message);
+    process.exit(1);
+  });
+}

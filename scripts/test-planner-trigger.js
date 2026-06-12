@@ -431,6 +431,25 @@ function baseDeps(gql, fakeFs, runPlannerFn) {
     check('update does NOT assert preservation it cannot verify', !/previous good state preserved/i.test(body), body);
   }
 
+  console.log('\nTest 24: AUDIT FIX — auth failure is distinguished from quiet network skip');
+  {
+    // Token revocation/expiry previously looked IDENTICAL to healthy idle:
+    // the status read failed, poll mode skipped quietly, and no human signal
+    // existed anywhere. Auth-like errors now surface authFailure: true so
+    // the CLI can log loudly (the monday notifier is useless here — it needs
+    // the very token that died).
+    const authGql = async () => { throw new Error('GraphQL error: [{"message":"Not Authenticated","error_code":"UserUnauthorizedException"}]'); };
+    const f = makeFakeFs();
+    const r = await runOnce({ mode: 'poll', deps: { ...baseDeps(authGql, f), gqlFn: authGql } });
+    check('ran:false with authFailure flag', r.ran === false && r.authFailure === true, JSON.stringify(r));
+
+    // Plain network failure stays a quiet skip without the flag.
+    const netGql = async () => { throw new Error('fetch failed'); };
+    const f2 = makeFakeFs();
+    const r2 = await runOnce({ mode: 'poll', deps: { ...baseDeps(netGql, f2), gqlFn: netGql } });
+    check('network failure NOT flagged as auth', r2.ran === false && !r2.authFailure, JSON.stringify(r2));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

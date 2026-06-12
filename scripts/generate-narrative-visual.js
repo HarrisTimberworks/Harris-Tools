@@ -21,7 +21,7 @@ const CREW_ORDER = ['Chris', 'Jonathan', 'Ken', 'Spencer', 'Bob', 'Ian', 'Paisio
 
 // Find the most-recent plan JSON
 const planFiles = fs.readdirSync(LOGS_DIR)
-  .filter(f => f.startsWith('rebalance-plan-') && f.endsWith('.json'))
+  .filter(f => /^rebalance-plan-\d{4}-\d{2}-\d{2}\.json$/.test(f))  // AUDIT FIX 2026-06-11: strict date pattern
   .sort();
 if (planFiles.length === 0) { throw new Error('No plan JSON found in logs/'); }
 const planFile = planFiles[planFiles.length - 1];

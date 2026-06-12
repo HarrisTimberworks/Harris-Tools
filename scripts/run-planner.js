@@ -85,11 +85,56 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
     const planFile = path.join(_logsDir, fname);
     console.log(`Loading plan: ${planFile}`);
     const planObj = JSON.parse(_fs.readFileSync(planFile, 'utf8'));
+
+    // AUDIT FIX (2026-06-11): a days-old plan applied against changed board
+    // state computes deletes/creates from a stale world. Refuse beyond 24h
+    // unless --force (operator re-runs --plan first, which takes ~2 min).
+    const MAX_PLAN_AGE_MS = 24 * 3600 * 1000;
+    if (planObj.generatedAt) {
+      const ageMs = _now().getTime() - new Date(planObj.generatedAt).getTime();
+      if (ageMs > MAX_PLAN_AGE_MS && !options.force) {
+        throw new Error(
+          `plan ${fname} is ${(ageMs / 3600e3).toFixed(1)}h old (generated ${planObj.generatedAt}) — ` +
+          `boards have likely changed. Re-run --plan first, or pass --force to apply anyway.`);
+      }
+    } else {
+      console.log('  ⚠️  plan has no generatedAt stamp — age guard skipped (legacy file)');
+    }
+
     await _runExecute(planObj, boards);
     return { plan: planObj };
   }
 
   // --plan mode: two-pass driver.
+
+  // AUDIT FIX (2026-06-11) — config lint: surface silent no-op shapes in
+  // config/rebalance-overrides.json (typo'd ids, 'station' vs 'stations',
+  // non-Monday weeks) loudly at the top of every run. Never blocks the run.
+  let configLint = { errors: [], warnings: [] };
+  try {
+    const { validateOverridesConfig } = require('./validate-config.js');
+    const overridesCfg = deps.overridesConfig || require('../config/rebalance-overrides.json');
+    // subcontractors is keyed by week → arrays of pool entries.
+    const subNames = Object.values(overridesCfg.subcontractors || {})
+      .flat().map(s => s && s.name).filter(Boolean);
+    const crews = new Set([
+      ...(boards.crewParents || []).map(p => p.crew),
+      ...subNames,
+    ]);
+    configLint = validateOverridesConfig(overridesCfg, {
+      jobIds: (boards.jobs || []).map(j => j.id),
+      crews,
+      todayISO,
+    });
+  } catch (e) {
+    configLint.warnings.push(`config lint itself failed: ${e.message}`);
+  }
+  console.log('\n=== CONFIG LINT ===');
+  if (configLint.errors.length === 0 && configLint.warnings.length === 0) {
+    console.log('  clean ✅');
+  }
+  for (const e of configLint.errors) console.log(`  ✗ ${e}`);
+  for (const w of configLint.warnings) console.log(`  ⚠️  ${w}`);
 
   // Pass 1: baseline. Strip overrideRows so the baseline reflects the
   // structural-config-only world. The validator's consistency check
@@ -243,21 +288,32 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   if (rtsCandidates.length === 0) {
     console.log('  no jobs newly ready-to-ship');
   }
-  for (const j of rtsCandidates) {
+
+  // AUDIT FIX (2026-06-11) — intake flip, inherited from the retired 15-min
+  // legacy scheduler: a 'Ready to Schedule' job that received placements in
+  // this plan flips to 'Scheduled' (lifecycle bookkeeping; the planner
+  // already plans such jobs either way).
+  const placedMpmIds = new Set((finalPlan.placements || []).map(p => String(p.masterPmId)));
+  const intakeCandidates = (boards.jobs || []).filter(j =>
+    j.status === 'Ready to Schedule' && placedMpmIds.has(String(j.masterPmId)));
+
+  const flipStatus = async (j, label, why) => {
     if (_dryRun) {
-      console.log(`  [DRY RUN] would set ${j.name} → Ready to Ship (all production stations complete)`);
-      continue;
+      console.log(`  [DRY RUN] would set ${j.name} → ${label} (${why})`);
+      return;
     }
     try {
       await _gqlFn(
         'mutation ($item: ID!, $board: ID!, $cv: JSON!) { change_multiple_column_values(item_id: $item, board_id: $board, column_values: $cv, create_labels_if_missing: true) { id } }',
-        { item: String(j.id), board: BOARD_PROD_LOAD, cv: JSON.stringify({ [PL_STATUS_COL]: { label: 'Ready to Ship' } }) });
-      statusDerivation.flipped.push(j.name);
-      console.log(`  ✓ ${j.name} → Ready to Ship (all production stations complete)`);
+        { item: String(j.id), board: BOARD_PROD_LOAD, cv: JSON.stringify({ [PL_STATUS_COL]: { label } }) });
+      statusDerivation.flipped.push(`${j.name} → ${label}`);
+      console.log(`  ✓ ${j.name} → ${label} (${why})`);
     } catch (e) {
       console.log(`  ✗ ${j.name} status flip failed: ${e.message} — re-runs next --plan`);
     }
-  }
+  };
+  for (const j of rtsCandidates) await flipStatus(j, 'Ready to Ship', 'all production stations complete');
+  for (const j of intakeCandidates) await flipStatus(j, 'Scheduled', 'intake: placed in this plan');
 
   const _writeCapacityView   = deps.writeCapacityView;
   const _writeWeeklyBriefing = deps.writeWeeklyBriefing;
@@ -311,7 +367,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
     }
   }
 
-  return { baselinePlan, validation, finalPlan, planFile, validationFile, outputs };
+  return { baselinePlan, validation, finalPlan, planFile, validationFile, outputs, configLint };
 }
 
 module.exports = { runPlanner };
@@ -336,6 +392,7 @@ if (require.main === module) {
   const { writeWeeklyBriefing } = require('./write-weekly-briefing.js');
   runPlanner({
     mode,
+    options: { force: args.includes('--force') },
     deps: {
       writeCapacityView: replaceCapacityViewBody,
       writeWeeklyBriefing,

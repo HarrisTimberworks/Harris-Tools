@@ -5,7 +5,7 @@ XML exports of the Windows Task Scheduler tasks that run the automation scripts 
 | Task | File | Schedule | Runs |
 | --- | --- | --- | --- |
 | HTW Daily Rollups | `HTW-Daily-Rollups.xml` | Daily at 6:00 AM | `run-daily-rollups.bat` |
-| HTW Production Scheduler | `HTW-Production-Scheduler.xml` | Every 15 min | `run-scheduler.bat` |
+| HTW Production Scheduler | `HTW-Production-Scheduler.xml` | **DISABLED 2026-06-11** | `run-scheduler.bat` — retired after the system audit: it wrote boards from a frozen April-era model (pre-Ian routing, no overrides/hard-rules/Stations-Complete, no today-floor on windows) and demonstrably deleted planner placements (see logs/scheduler-2026-06-10.log). Its one real job — flipping Ready to Schedule → Scheduled at intake — now lives in `run-planner.js`'s STATUS DERIVATION step. Do NOT re-enable without porting current routing. |
 | HTW Planner - Poll | `HTW-Planner-Poll.xml` | Every 1 min | `run-planner-poll-hidden.vbs` → `run-planner-poll.bat` (Phase 3 on-demand trigger; no-op unless the ▶️ Planner Trigger item on the Manual Overrides board is set to "Run Requested") |
 | HTW Planner - Saturday | `HTW-Planner-Saturday.xml` | Saturday 6:00 PM | `run-planner-saturday-hidden.vbs` → `run-planner-saturday.bat` (full weekly plan + Capacity View + Weekly Briefing) |
 

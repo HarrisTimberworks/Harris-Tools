@@ -170,6 +170,11 @@ function shouldNotify(result) {
   if (result?.outputs?.weeklyBriefing && result.outputs.weeklyBriefing.ok === false) {
     reasons.push(`Weekly Briefing regeneration failed: ${result.outputs.weeklyBriefing.error}`);
   }
+  // AUDIT FIX (2026-06-11): config-lint errors are silent no-ops waiting to
+  // bite a rebalance — they warrant a human.
+  if (result?.configLint?.errors?.length) {
+    reasons.push(`${result.configLint.errors.length} config error(s) in rebalance-overrides.json (silent no-op shapes — see the run log)`);
+  }
   return { notify: reasons.length > 0, reasons };
 }
 
@@ -222,10 +227,19 @@ async function runOnce({ mode = 'poll', deps = {} } = {}) {
     const read = await _gqlFn(readQ, { item: [String(config.itemId)] });
     statusText = (read?.items?.[0]?.column_values || []).find(c => c.id === config.statusColumnId)?.text || null;
   } catch (e) {
+    // AUDIT FIX (2026-06-11): token death previously looked identical to
+    // healthy idle. Auth-shaped errors get a distinct flag so the CLI logs
+    // loudly every tick until the token is rotated (monday notifications
+    // can't help — they need the very token that died).
+    const isAuth = /not authenticated|unauthorized|invalid token|401/i.test(e.message || '');
     if (mode === 'poll') {
-      return { ran: false, skipped: `status read failed (${e.message}) — next tick retries` };
+      return {
+        ran: false,
+        ...(isAuth ? { authFailure: true } : {}),
+        skipped: `status read failed (${e.message}) — ${isAuth ? 'TOKEN AUTH FAILURE' : 'next tick retries'}`,
+      };
     }
-    _logger.log(`planner-trigger: status read failed (${e.message}) — scheduled run proceeding anyway`);
+    _logger.log(`planner-trigger: status read failed (${e.message}) — scheduled run proceeding anyway${isAuth ? ' (LOOKS LIKE TOKEN AUTH FAILURE — rotate .token)' : ''}`);
   }
 
   if (mode === 'poll' && decideAction(statusText) !== 'run') {
@@ -368,6 +382,13 @@ if (require.main === module) {
     },
   }).then(r => {
     if (r.planError || r.error) process.exitCode = 1;
+    // Token death is NEVER silent — one loud line per tick until rotated
+    // (Task Scheduler history also shows the nonzero exits).
+    if (r.authFailure) {
+      console.error(`planner-trigger (${mode}): TOKEN AUTH FAILURE — monday rejected the token in C:\\Users\\chris\\Harris-Tools\\.token. The planner is BLIND until it is replaced.`);
+      process.exitCode = 2;
+      return;
+    }
     // Idle poll ticks stay silent — the daily log only carries real runs.
     if (!r.ran && (mode === 'scheduled' || process.env.VERBOSE === '1')) {
       console.log(`planner-trigger (${mode}): ${r.skipped}`);
