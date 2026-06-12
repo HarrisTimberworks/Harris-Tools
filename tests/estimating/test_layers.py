@@ -36,3 +36,34 @@ def test_apply_refuses_unknown_chest_title(make_chest, tmp_path):
     import pytest
     with pytest.raises(KeyError, match="MYSTERY"):
         layers.apply(tmp_path)
+
+
+def test_apply_verify_failure_carries_partial_changes(make_chest, tmp_path,
+                                                      monkeypatch):
+    import pytest
+    from estimating import btx
+    make_chest("HTW-R 01 CASE & FF", [{"subject": "A", "unit": "EA",
+                                       "uc": "1.00"}])
+    make_chest("HTW-R 06 TRIM", [{"subject": "B", "unit": "EA",
+                                  "uc": "1.00"}])
+    real_read = btx.read_toolset
+    calls = {"n": 0}
+
+    def flaky_read(path):
+        ts = real_read(path)
+        # let the first chest's write+verify pass; corrupt the verify
+        # re-read of the SECOND chest by blanking its tool layers
+        if "TRIM" in str(path):
+            calls["n"] += 1
+            if calls["n"] > 1:                  # 1st read = pre-write; 2nd = verify
+                for t in ts.tools:
+                    t.layer = None
+        return ts
+
+    monkeypatch.setattr(btx, "read_toolset", flaky_read)
+    with pytest.raises(layers.LayerVerifyError) as exc:
+        layers.apply(tmp_path)
+    # CASE chest verified before TRIM failed
+    assert exc.value.verified_changes == [
+        ("HTW-R 01 CASE & FF", "A", None, "CASE")]
+    assert "TRIM" in str(exc.value.failed_path)

@@ -4,6 +4,20 @@ import os
 
 from . import btx
 
+
+class LayerVerifyError(RuntimeError):
+    """Raised when post-write layer verification fails for a chest.
+
+    `verified_changes` holds every (chest, subject, old, new) written and
+    re-read successfully before this failure; `failed_path` is the suspect
+    chest. Chests after it were not touched."""
+
+    def __init__(self, message, verified_changes, failed_path):
+        super().__init__(message)
+        self.verified_changes = verified_changes
+        self.failed_path = failed_path
+
+
 LAYER_BY_CHEST = {
     "HTW-R 01 CASE & FF": "CASE",
     "HTW-R 02 CTOP & PANELS": "CTOP",
@@ -34,23 +48,26 @@ def apply(chest_dir):
     """Set every tool's layer to its chest's taxonomy layer.
     Returns [(chest, subject, old, new)] for tools actually changed.
     Raises KeyError for a chest title not in the taxonomy."""
-    changed = []
+    verified = []
     for ts in _chests(chest_dir):
         if ts.title not in LAYER_BY_CHEST:
             raise KeyError(f"no layer defined for chest {ts.title!r}")
         target = LAYER_BY_CHEST[ts.title]
+        chest_changes = []
         dirty = False
         for tool in ts.tools:
             if tool.layer == target:
                 continue
-            changed.append((ts.title, tool.subject, tool.layer, target))
+            chest_changes.append((ts.title, tool.subject, tool.layer, target))
             btx.set_layer(tool, target)
             dirty = True
         if dirty:
             btx.write_toolset(ts, ts.path)
             for tool in btx.read_toolset(ts.path).tools:
                 if tool.layer != target:
-                    raise RuntimeError(
+                    raise LayerVerifyError(
                         f"layer verification failed for {tool.subject!r} "
-                        f"in {ts.path}")
-    return changed
+                        f"in {ts.path}",
+                        verified_changes=verified, failed_path=ts.path)
+            verified.extend(chest_changes)
+    return verified
