@@ -60,3 +60,49 @@ def test_set_preset_rejects_delimiter_characters(make_chest):
     ts = btx.read_toolset(p)
     with pytest.raises(ValueError, match="delimiters"):
         btx.set_preset_unit_cost(ts.tools[0], "8.50 (material)")
+
+
+def test_color_parses_to_hex(make_chest):
+    p = make_chest("X", [{"subject": "A", "unit": "LF", "uc": "1.00",
+                          "color": "1 0 0.25"}])
+    assert btx.read_toolset(p).tools[0].color == "#FF0040"
+
+
+def test_set_layer_replaces_existing(make_chest, tmp_path):
+    p = make_chest("X", [{"subject": "A", "unit": "LF", "uc": "1.00",
+                          "layer": "OLD"}])
+    ts = btx.read_toolset(p)
+    btx.set_layer(ts.tools[0], "TRIM")
+    out = tmp_path / "o.btx"
+    btx.write_toolset(ts, out)
+    assert btx.read_toolset(out).tools[0].layer == "TRIM"
+
+
+def test_set_layer_inserts_when_absent(make_chest, tmp_path):
+    p = make_chest("X", [{"subject": "A", "unit": "LF", "uc": "1.00"}])
+    ts = btx.read_toolset(p)
+    assert ts.tools[0].layer is None
+    btx.set_layer(ts.tools[0], "CASE")
+    out = tmp_path / "o.btx"
+    btx.write_toolset(ts, out)
+    t2 = btx.read_toolset(out).tools[0]
+    assert t2.layer == "CASE"
+    assert t2.subject == "A"           # nothing else disturbed
+    assert t2.preset_unit_cost == "1.00"
+
+
+def test_rename_subject_roundtrip(make_chest, tmp_path):
+    p = make_chest("X", [{"subject": "SHIPPING ", "unit": "EA",
+                          "uc": "0.00"}])
+    ts = btx.read_toolset(p)
+    btx.rename_subject(ts.tools[0], "SHIPPING")
+    out = tmp_path / "o.btx"
+    btx.write_toolset(ts, out)
+    assert btx.read_toolset(out).tools[0].subject == "SHIPPING"
+
+
+def test_rename_subject_rejects_delimiters(make_chest):
+    p = make_chest("X", [{"subject": "A", "unit": "EA", "uc": "1.00"}])
+    ts = btx.read_toolset(p)
+    with pytest.raises(ValueError, match="delimiters"):
+        btx.rename_subject(ts.tools[0], "BAD(NAME)")

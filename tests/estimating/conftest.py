@@ -10,11 +10,11 @@ TYPE_MAP = {
 }
 
 
-def _raw_dict(subject, uc, em="1.06", md="0.60", layer=None):
+def _raw_dict(subject, uc, em="1.06", md="0.60", layer=None, color="0 0.5019608 1"):
     oc = f"/OC({layer})" if layer else ""
     cols = f"({uc})({em})({md})()()()" if uc is not None else "()()()()()()"
     return (
-        f"<</Subject 1/Vertices[0 0 1 1]/IC[0 0.5 1]"
+        f"<</Subject 1/Vertices[0 0 1 1]/IC[{color}]"
         f"/Subj({subject})/BSIColumnData[{cols}]{oc}/Subtype/Polygon>>"
     )
 
@@ -35,7 +35,7 @@ def make_chest(tmp_path):
             ET.SubElement(res, "Data").text = "00"
             ET.SubElement(item, "Name").text = "FIXTURENAME"
             ET.SubElement(item, "Type").text = TYPE_MAP[t["unit"]]
-            raw = _raw_dict(t["subject"], t.get("uc"), layer=t.get("layer"))
+            raw = _raw_dict(t["subject"], t.get("uc"), layer=t.get("layer"), color=t.get("color", "0 0.5019608 1"))
             ET.SubElement(item, "Raw").text = zlib.compress(
                 raw.encode("latin-1")).hex()
             ET.SubElement(item, "X").text = "0"

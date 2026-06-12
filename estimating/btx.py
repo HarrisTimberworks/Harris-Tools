@@ -9,6 +9,7 @@ SUBJ_RE = re.compile(r'/Subj\(((?:[^()\\]|\\.)*)\)')
 COL_RE = re.compile(r'/BSIColumnData\[((?:\((?:[^()\\]|\\.)*\))*)\]')
 TOKEN_RE = re.compile(r'\((?:[^()\\]|\\.)*\)')
 OC_RE = re.compile(r'/OC\(((?:[^()\\]|\\.)*)\)')
+IC_RE = re.compile(r'/IC\[([^\]]*)\]')
 
 CHEST_GLOB = "HTW-[RC] [0-9][0-9] *.btx"
 
@@ -38,6 +39,17 @@ class Tool:
             return None
         v = self.col_tokens[0][1:-1]
         return _unescape(v) if v else None
+
+    @property
+    def color(self):
+        m = IC_RE.search(self.raw)
+        if not m:
+            return None
+        parts = m.group(1).split()
+        if len(parts) < 3:
+            return None
+        rgb = [round(float(x) * 255) for x in parts[:3]]
+        return "#{:02X}{:02X}{:02X}".format(*rgb)
 
 
 @dataclass
@@ -74,12 +86,20 @@ def read_toolset(path) -> ToolSet:
     return ToolSet(title=title, path=str(path), tools=tools, _tree=tree)
 
 
-def set_preset_unit_cost(tool: Tool, value: str):
-    """Rewrite slot 0 (Unit Cost) of the 6-slot array in tool.raw + element."""
+def _reencode(tool: Tool):
+    tool.element.find("Raw").text = zlib.compress(
+        tool.raw.encode("latin-1")).hex()
+
+
+def _check_pdf_text(value: str, what: str):
     if "(" in value or ")" in value or "\\" in value:
         raise ValueError(
-            f"preset value {value!r} contains PDF-string delimiters — "
-            f"pass a plain number string like '12.50'")
+            f"{what} {value!r} contains PDF-string delimiters")
+
+
+def set_preset_unit_cost(tool: Tool, value: str):
+    """Rewrite slot 0 (Unit Cost) of the 6-slot array in tool.raw + element."""
+    _check_pdf_text(value, "preset value")
     if len(tool.col_tokens) != 6:
         raise ValueError(
             f"{tool.subject}: expected 6-slot BSIColumnData, "
@@ -87,8 +107,30 @@ def set_preset_unit_cost(tool: Tool, value: str):
     tool.col_tokens[0] = f"({value})"
     new_block = "/BSIColumnData[" + "".join(tool.col_tokens) + "]"
     tool.raw = COL_RE.sub(lambda m: new_block, tool.raw, count=1)
-    tool.element.find("Raw").text = zlib.compress(
-        tool.raw.encode("latin-1")).hex()
+    _reencode(tool)
+
+
+def set_layer(tool: Tool, layer: str):
+    """Set the markup's layer (/OC). Replaces an existing assignment or
+    inserts one when absent."""
+    _check_pdf_text(layer, "layer")
+    if OC_RE.search(tool.raw):
+        tool.raw = OC_RE.sub(lambda m: f"/OC({layer})", tool.raw, count=1)
+    else:
+        idx = tool.raw.rstrip().rfind(">>")
+        tool.raw = tool.raw[:idx] + f"/OC({layer})" + tool.raw[idx:]
+    tool.layer = layer
+    _reencode(tool)
+
+
+def rename_subject(tool: Tool, new_subject: str):
+    """Rename the tool's /Subj. The subject is the exact-match key joining
+    tools, library rows, and takeoff line items — rename all three together."""
+    _check_pdf_text(new_subject, "subject")
+    tool.raw = SUBJ_RE.sub(lambda m: f"/Subj({new_subject})", tool.raw,
+                           count=1)
+    tool.subject = new_subject
+    _reencode(tool)
 
 
 def write_toolset(ts: ToolSet, path):
