@@ -101,8 +101,8 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
       console.log('  ⚠️  plan has no generatedAt stamp — age guard skipped (legacy file)');
     }
 
-    await _runExecute(planObj, boards);
-    return { plan: planObj };
+    const executed = await _runExecute(planObj, boards);
+    return { plan: planObj, executed: executed || null };
   }
 
   // --plan mode: two-pass driver.

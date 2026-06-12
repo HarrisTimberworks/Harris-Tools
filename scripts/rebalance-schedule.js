@@ -2090,8 +2090,10 @@ async function runExecute(plan, boards) {
     for (const r of gate.invalidRows) {
       console.error(`   - ${r.jobName}: ${(r.errors || []).join('; ')}`);
     }
-    console.error(`\nFix windows in customWindow overrides or push delivery dates, OR rerun with --force to bypass.`);
-    process.exit(1);
+    // AUDIT/DEPLOY FIX (2026-06-11): throw instead of process.exit(1) so
+    // in-process callers (planner-trigger deploy flow) can catch and report;
+    // the CLI .catch path produces the same exit-1 behavior.
+    throw new Error(`execute gate blocked: ${gate.invalidRows.length} finishing-cycle invalid row(s) — fix windows/delivery dates or rerun with --force`);
   }
 
   console.log('\nThis will DELETE all existing subitems for active jobs and CREATE new ones per plan.');
@@ -2145,10 +2147,10 @@ async function runExecute(plan, boards) {
   // Board so the columns stop going stale after every --execute (iter-8 pain).
   // pLam / finishingDays=0 jobs get nulls (clear the columns).
   const finishMutations = buildFinishDateMutations(plan);
+  let writeOk = 0;
+  let writeFail = 0;
   if (finishMutations.length > 0) {
     console.log(`\nWriting finish dates to Production Load Board (${finishMutations.length} job(s))...`);
-    let writeOk = 0;
-    let writeFail = 0;
     for (const m of finishMutations) {
       const cvStr = JSON.stringify(m.columnValues).replace(/"/g, '\\"');
       const mutation = `mutation {
@@ -2170,6 +2172,8 @@ async function runExecute(plan, boards) {
   }
 
   console.log('\n✅ Execution complete.');
+  // DEPLOY (2026-06-11): counts for the trigger's run summary.
+  return { deleted, created, subSkipped, finishWrites: { ok: writeOk, fail: writeFail } };
 }
 
 // ============================================================================

@@ -10,6 +10,11 @@
  *   Secondary    (label id 0)  -> cross-trained, can do if needed
  *   Not Trained  (label id 2)  -> red flag, person shouldn't be here
  *
+ * Departures are week-gated (same rule as the schedulers' hardRuleViolation):
+ * a departed crew's subitems flag "Not Trained" from their departure week
+ * forward, while pre-departure historical rows keep validating against
+ * their old matrix entry. The week comes from the parent row's Week column.
+ *
  * Usage:
  *   set MONDAY_API_TOKEN=your_token
  *   node scripts/validate-cross-training.js
@@ -22,22 +27,27 @@ const COL_STATION = 'dropdown_mm2kex19';
 const COL_OWNER = 'person';
 const COL_ASSIGNED_TEXT = 'text_mm2mpjcn';
 const COL_CROSS_TRAIN = 'color_mm2m34ta';
+const COL_PARENT_WEEK = 'date_mm2kjth4';  // Week column on the parent (crew × week) row
 
 // Cross-training matrix: crew name -> { station: 'Primary' | 'Secondary' }
 // Stations not listed for a person = "Not Trained"
+//
+// Mirrors docs/htw-cross-training-matrix.md §3/§4/§6 (revised 2026-06-11,
+// Ian departed), collapsed to station level: Primary for any subtype wins
+// over Secondary. Subtype nuance (Ken Commercial-only PostFin, emergency
+// PreFin) can't be carried here — the schedulers' hard rules own that.
 const MATRIX = {
   Chris:    { Engineering: 'Primary' },
   Jonathan: {
     Engineering:           'Primary',
-    'Pre Fin Cab Assembly': 'Secondary',
-    'Post Fin Cab Assembly':'Secondary',
+    Benchwork:             'Secondary',  // bench chain: Bob > Spencer > Jonathan
+    'Pack & Ship':         'Secondary',
     Delivery:              'Secondary',
   },
   Paisios: {
-    Engineering:            'Primary',
-    Benchwork:              'Secondary',
-    'Pre Fin Cab Assembly': 'Secondary',
-    'Post Fin Cab Assembly':'Primary',
+    Engineering:            'Secondary', // in training, backup to Chris
+    Benchwork:              'Secondary', // light work only (hard rule 5)
+    'Post Fin Cab Assembly':'Secondary',
     'Pack & Ship':          'Primary',
     Delivery:               'Primary',
   },
@@ -45,6 +55,8 @@ const MATRIX = {
     Engineering: 'Secondary',   // remote part-time
   },
   Ian: {
+    // Departed 2026-06-11 (see DEPARTED below). Historical shape preserved
+    // verbatim so pre-departure rows keep validating as they did.
     Benchwork:              'Primary',
     'Pre Fin Cab Assembly': 'Primary',
     'Post Fin Cab Assembly':'Primary',
@@ -55,10 +67,12 @@ const MATRIX = {
     Benchwork:              'Primary',
     'Pre Fin Cab Assembly': 'Primary',
     'Post Fin Cab Assembly':'Secondary',
+    'Pack & Ship':          'Secondary',
+    Delivery:               'Secondary',
   },
   Ken: {
     'Panel Processing':     'Primary',
-    'Pre Fin Cab Assembly': 'Secondary',
+    'Pre Fin Cab Assembly': 'Secondary',  // commercial emergency only (script can't detect this nuance)
     'Post Fin Cab Assembly':'Secondary',  // commercial only (script can't detect this nuance)
     'Pack & Ship':          'Secondary',
     Delivery:               'Secondary',
@@ -66,10 +80,18 @@ const MATRIX = {
   Bob: {
     'Panel Processing':     'Secondary',
     Benchwork:              'Primary',
-    'Pre Fin Cab Assembly': 'Primary',
+    'Pre Fin Cab Assembly': 'Secondary',  // Spencer took PreFin Primary in the 6/11 chains
     'Post Fin Cab Assembly':'Primary',
     'Pack & Ship':          'Secondary',
+    Delivery:               'Secondary',
   },
+};
+
+// crew name -> departure date. From that week forward the person flags
+// "Not Trained" at every station; earlier weeks use their MATRIX entry.
+// Same week-gated rule as hardRuleViolation in the schedulers.
+const DEPARTED = {
+  Ian: '2026-06-11',
 };
 
 // Cross-Train Flag label IDs (from the Subitem board):
@@ -96,11 +118,6 @@ const RATE_LIMIT_MS = 150;
 const DRY_RUN = process.env.DRY_RUN === '1';
 const TOKEN = process.env.MONDAY_API_TOKEN;
 
-if (!DRY_RUN && !TOKEN) {
-  console.error('ERROR: MONDAY_API_TOKEN not set.');
-  process.exit(1);
-}
-
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function gql(query) {
@@ -121,9 +138,11 @@ function resolveCrewName(personText, assignedText) {
   return PERSON_TO_NAME[first] || first;
 }
 
-function getExpectedFlag(crew, station) {
+function getExpectedFlag(crew, station, week) {
   const crewMatrix = MATRIX[crew];
   if (!crewMatrix) return null; // unknown person — caller decides
+  const departedOn = DEPARTED[crew];
+  if (departedOn && week >= departedOn) return 'Not Trained'; // mis-assignment
   const level = crewMatrix[station];
   if (level) return level;          // 'Primary' or 'Secondary'
   return 'Not Trained';              // crew exists but not trained here
@@ -142,6 +161,10 @@ async function getAllSubitems() {
           cursor
           items {
             id
+            column_values(ids: ["${COL_PARENT_WEEK}"]) {
+              id
+              text
+            }
             subitems {
               id
               name
@@ -157,7 +180,8 @@ async function getAllSubitems() {
     const d = await gql(q);
     const p = d.boards[0].items_page;
     for (const parent of p.items) {
-      for (const sub of (parent.subitems || [])) subitems.push(sub);
+      const parentWeek = (parent.column_values || []).find(c => c.id === COL_PARENT_WEEK)?.text || '';
+      for (const sub of (parent.subitems || [])) subitems.push({ ...sub, parentWeek });
     }
     cursor = p.cursor;
     if (!cursor) break;
@@ -204,7 +228,15 @@ async function main() {
       continue;
     }
 
-    const expected = getExpectedFlag(crew, station);
+    // A departed crew's flag depends on the week; without one we can't tell
+    // history from mis-assignment, so leave the row alone and surface it.
+    if (DEPARTED[crew] && !sub.parentWeek) {
+      warnings.push(`${sub.id} "${sub.name}": ${crew} departed ${DEPARTED[crew]} but parent row has no week — flag left as-is`);
+      skipped++;
+      continue;
+    }
+
+    const expected = getExpectedFlag(crew, station, sub.parentWeek);
     if (!expected) {
       warnings.push(`${sub.id} "${sub.name}": unknown crew "${crew}"`);
       skipped++;
@@ -241,7 +273,25 @@ async function main() {
   }
 }
 
-main().catch(e => {
-  console.error('Fatal:', e.message);
-  process.exit(1);
-});
+// Exports so tests can verify the matrix/flag logic without triggering CLI
+// entry (same pattern as schedule-production-jobs.js / rebalance-schedule.js).
+// CLI invocations (require.main === module) keep the original token check + main().
+module.exports = {
+  MATRIX,
+  DEPARTED,
+  FLAG_INDEX,
+  PERSON_TO_NAME,
+  resolveCrewName,
+  getExpectedFlag,
+};
+
+if (require.main === module) {
+  if (!DRY_RUN && !TOKEN) {
+    console.error('ERROR: MONDAY_API_TOKEN not set.');
+    process.exit(1);
+  }
+  main().catch(e => {
+    console.error('Fatal:', e.message);
+    process.exit(1);
+  });
+}

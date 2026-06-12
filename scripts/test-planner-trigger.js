@@ -450,6 +450,75 @@ function baseDeps(gql, fakeFs, runPlannerFn) {
     check('network failure NOT flagged as auth', r2.ran === false && !r2.authFailure, JSON.stringify(r2));
   }
 
+  console.log('\nTest 25: DEPLOY — decideAction recognizes Deploy Requested');
+  {
+    check('Deploy Requested → deploy', decideAction('Deploy Requested') === 'deploy', decideAction('Deploy Requested'));
+    check('Run Requested still → run', decideAction('Run Requested') === 'run', '');
+  }
+
+  console.log('\nTest 26: DEPLOY — plan then execute, Idle at end, Chris notified of the deploy');
+  {
+    const gql = makeFakeGql({ status: 'Deploy Requested' });
+    const f = makeFakeFs();
+    const modes = [];
+    const runPlannerFn = async ({ mode: m } = {}) => {
+      modes.push(m);
+      if (m === 'plan') return cleanResult();
+      return { plan: {}, executed: { deleted: 12, created: 9, subSkipped: 1, finishWrites: { ok: 3, fail: 0 } } };
+    };
+    const r = await runOnce({ mode: 'poll', deps: baseDeps(gql, f, runPlannerFn) });
+    check('ran + deployed', r.ran === true && r.deployed === true, JSON.stringify(r));
+    check('plan ran BEFORE execute', modes.join(',') === 'plan,execute', JSON.stringify(modes));
+    check('status flipped Running then Idle', gql.statusLabels().join(',') === 'Running,Idle', JSON.stringify(gql.statusLabels()));
+    const notif = gql.calls.find(c => /create_notification/.test(c.query));
+    check('deploy notification sent (board rewritten — Chris should know)', /deploy/i.test(notif?.variables?.text || ''), notif?.variables?.text || '(none)');
+    const update = gql.calls.find(c => /create_update/.test(c.query));
+    check('summary update carries deploy counts', /12 deleted/.test(update?.variables?.body || '') && /9 created/.test(update?.variables?.body || ''), update?.variables?.body);
+  }
+
+  console.log('\nTest 27: DEPLOY — plan error aborts the deploy (no execute), status Error');
+  {
+    const gql = makeFakeGql({ status: 'Deploy Requested' });
+    const f = makeFakeFs();
+    const modes = [];
+    const runPlannerFn = async ({ mode: m } = {}) => {
+      modes.push(m);
+      return { validation: { accepted: [], conflicts: [] }, planError: 'planner exploded' };
+    };
+    const r = await runOnce({ mode: 'poll', deps: baseDeps(gql, f, runPlannerFn) });
+    check('execute never ran', modes.join(',') === 'plan', JSON.stringify(modes));
+    check('status ends Error', gql.statusLabels().pop() === 'Error', JSON.stringify(gql.statusLabels()));
+    check('deployed flag false/absent', !r.deployed, JSON.stringify(r));
+  }
+
+  console.log('\nTest 28: DEPLOY — execute failure → Error + notify; dryRun deploy skips execute');
+  {
+    const gql = makeFakeGql({ status: 'Deploy Requested' });
+    const f = makeFakeFs();
+    const runPlannerFn = async ({ mode: m } = {}) => {
+      if (m === 'plan') return cleanResult();
+      throw new Error('finishing-cycle gate blocked');
+    };
+    const r = await runOnce({ mode: 'poll', deps: baseDeps(gql, f, runPlannerFn) });
+    check('execute failure → status Error', gql.statusLabels().pop() === 'Error', JSON.stringify(gql.statusLabels()));
+    check('notification mentions the gate failure', /finishing-cycle gate/.test(gql.calls.find(c => /create_notification/.test(c.query))?.variables?.text || ''), '');
+
+    // dryRun: plan runs dry, execute is skipped with a would-deploy note.
+    const gql2 = makeFakeGql({ status: 'Deploy Requested' });
+    const f2 = makeFakeFs();
+    const modes2 = [];
+    const prevEnv = process.env.DRY_RUN;
+    process.env.DRY_RUN = '1';
+    let r2;
+    try {
+      r2 = await runOnce({ mode: 'poll', deps: baseDeps(gql2, f2, async ({ mode: m } = {}) => { modes2.push(m); return cleanResult(); }) });
+    } finally {
+      if (prevEnv === undefined) delete process.env.DRY_RUN; else process.env.DRY_RUN = prevEnv;
+    }
+    check('dryRun: execute never invoked', modes2.join(',') === 'plan', JSON.stringify(modes2));
+    check('dryRun: not marked deployed', !r2.deployed, JSON.stringify(r2));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

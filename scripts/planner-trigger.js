@@ -28,6 +28,7 @@ const path = require('path');
 const TRIGGER_LABELS = Object.freeze({
   idle: 'Idle',
   requested: 'Run Requested',
+  deploy: 'Deploy Requested',
   running: 'Running',
   error: 'Error',
 });
@@ -37,7 +38,13 @@ const DEFAULT_LOCK_FILE = path.join(__dirname, '..', 'logs', 'planner.lock');
 const DEFAULT_CONFIG_FILE = path.join(__dirname, '..', 'config', 'planner-trigger.json');
 
 function decideAction(statusText) {
-  return statusText === TRIGGER_LABELS.requested ? 'run' : 'skip';
+  if (statusText === TRIGGER_LABELS.requested) return 'run';
+  // DEPLOY (2026-06-11, per Chris): Bob can deploy — plan + execute in one
+  // pass. The execute leg reuses every safety layer: the plan is fresh by
+  // construction (just produced), the finishing-cycle gate still blocks
+  // invalid cycles, and the delete-guard limits the blast radius.
+  if (statusText === TRIGGER_LABELS.deploy) return 'deploy';
+  return 'skip';
 }
 
 // Lockfile guard. REVIEW FIX (2026-06-11): the original check-then-write was
@@ -115,7 +122,7 @@ function loadTriggerConfig({ fsImpl = fs, configFile = DEFAULT_CONFIG_FILE } = {
 }
 
 // Human-readable run summary for the trigger-item update (audit trail).
-function buildRunSummary(result, { mode, startedAt, finishedAt } = {}) {
+function buildRunSummary(result, { mode, startedAt, finishedAt, deploy } = {}) {
   const lines = [];
   const dur = startedAt && finishedAt ? ` in ${Math.round((finishedAt - startedAt) / 1000)}s` : '';
   lines.push(`Planner run (${mode || 'manual'})${dur} — ${finishedAt ? finishedAt.toISOString() : ''}`);
@@ -153,6 +160,11 @@ function buildRunSummary(result, { mode, startedAt, finishedAt } = {}) {
     lines.push(wb.ok
       ? `Weekly Briefing: week ${wb.weekISO}${wb.created ? ' (doc created)' : ''}`
       : `Weekly Briefing: FAILED — ${wb.error}`);
+  }
+  if (deploy) {
+    lines.push(`DEPLOYED to Crew Allocation: ${deploy.deleted} deleted / ${deploy.created} created subitems`
+      + (deploy.subSkipped ? ` (${deploy.subSkipped} sub placements ops-only)` : '')
+      + `; finish dates ${deploy.finishWrites?.ok ?? 0} ok${deploy.finishWrites?.fail ? `, ${deploy.finishWrites.fail} FAILED` : ''}`);
   }
   return lines.join('\n');
 }
@@ -212,6 +224,8 @@ async function runOnce({ mode = 'poll', deps = {} } = {}) {
   const _runPlanner = deps.runPlannerFn;
   const _userId  = deps.notifyUserId || CHRIS_USER_ID;
 
+  const _dryRun = process.env.DRY_RUN === '1';
+
   const config = deps.config || loadTriggerConfig({ fsImpl: _fsImpl, configFile: deps.configFile });
   if (!config) {
     throw new Error('planner-trigger: no trigger config — run `node scripts/setup-trigger-item.js` first (writes config/planner-trigger.json)');
@@ -242,7 +256,8 @@ async function runOnce({ mode = 'poll', deps = {} } = {}) {
     _logger.log(`planner-trigger: status read failed (${e.message}) — scheduled run proceeding anyway${isAuth ? ' (LOOKS LIKE TOKEN AUTH FAILURE — rotate .token)' : ''}`);
   }
 
-  if (mode === 'poll' && decideAction(statusText) !== 'run') {
+  const action = mode === 'scheduled' ? 'run' : decideAction(statusText);
+  if (mode === 'poll' && action === 'skip') {
     // REVIEW FIX — stuck-Running self-heal: a run killed mid-flight (logoff,
     // reboot, battery-stop) leaves status=Running with no live lock; poll
     // only acts on Run Requested, so without this the board lies until the
@@ -291,6 +306,24 @@ async function runOnce({ mode = 'poll', deps = {} } = {}) {
       unexpectedError = e.message || String(e);
       result = { validation: { accepted: [], conflicts: [] }, planError: unexpectedError, unexpectedError: true };
     }
+
+    // DEPLOY: after a clean plan, run --execute in-process. The execute leg
+    // loads the plan file just written (fresh — passes the age guard) and
+    // goes through the finishing-cycle gate + delete-guard. Any throw lands
+    // in planError so the Error/notify path below handles it.
+    let deploy = null;
+    if (action === 'deploy' && !result.planError) {
+      if (_dryRun) {
+        _logger.log('  [DRY RUN] would deploy (plan + execute) — execute skipped');
+      } else {
+        try {
+          const ex = await _runPlanner({ mode: 'execute' });
+          deploy = (ex && ex.executed) || { deleted: '?', created: '?', subSkipped: 0, finishWrites: { ok: 0, fail: 0 } };
+        } catch (e) {
+          result.planError = `deploy failed during execute: ${e.message || e}`;
+        }
+      }
+    }
     const finishedAt = _now();
 
     // REVIEW FIX — the post-run flip was the only unguarded monday write: a
@@ -303,7 +336,7 @@ async function runOnce({ mode = 'poll', deps = {} } = {}) {
       _logger.log(`planner-trigger: post-run status flip failed (${e.message}) — the stuck-Running self-heal will correct it on a later tick`);
     }
 
-    const summary = buildRunSummary(result, { mode, startedAt, finishedAt });
+    const summary = buildRunSummary(result, { mode, startedAt, finishedAt, deploy });
     try {
       await postTriggerUpdate(config, summary, { gqlFn: _gqlFn });
     } catch (e) {
@@ -311,6 +344,12 @@ async function runOnce({ mode = 'poll', deps = {} } = {}) {
     }
 
     const n = shouldNotify(result);
+    // A deploy rewrites the Crew Allocation board — Chris hears about it
+    // even on success (tunable later if it gets noisy).
+    if (deploy) {
+      n.notify = true;
+      n.reasons.unshift(`deploy completed via trigger: ${deploy.deleted} deleted / ${deploy.created} created subitems`);
+    }
     if (n.notify) {
       try {
         await notifyChris(config, `HTW Planner (${mode}): ${n.reasons.join(' • ')}`, { gqlFn: _gqlFn, userId: _userId });
@@ -322,6 +361,7 @@ async function runOnce({ mode = 'poll', deps = {} } = {}) {
     _logger.log(summary);
     return {
       ran: true,
+      ...(deploy ? { deployed: true } : {}),
       ...(result.planError ? { planError: result.planError } : {}),
       ...(unexpectedError ? { error: unexpectedError } : {}),
       notified: n.notify,

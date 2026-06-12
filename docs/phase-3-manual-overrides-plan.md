@@ -74,7 +74,9 @@ When a station's work on a job is fully done, open the **Production Load Board**
 3. Within ~1 minute the status flips to **Running** (planner working, ~2 min), then back to **Idle**.
 4. Read the result: each override row's Status is now **Applied** or **Conflict** (reason in the Conflict Reason column), the **📊 HTW Live Capacity View** and **📋 HTW Weekly Briefing** docs are freshly regenerated, and the trigger item carries an update with the run summary.
 
-**Status meanings on the trigger item:** `Idle` ready • `Run Requested` queued, picked up within a minute • `Running` in progress, don't re-request • `Error` the run failed — Chris gets a monday notification automatically; the previous docs/plan stay intact.
+**To deploy the schedule to the boards (added 2026-06-12, per Chris):** set the trigger's Status to **Deploy Requested** instead. The planner runs a fresh plan AND applies it — Crew Allocation subitems are rewritten and finish dates land on the Production Load Board. Safeties: the finishing-cycle gate blocks invalid cycles, deletion only touches jobs the new plan re-places, and Chris gets a notification on every deploy.
+
+**Status meanings on the trigger item:** `Idle` ready • `Run Requested` plan + fresh docs only (boards untouched) • `Deploy Requested` plan + APPLY to the boards • `Running` in progress, don't re-request • `Error` the run failed — Chris gets a monday notification automatically; the previous docs/plan stay intact.
 
 **To retry a Conflict row:** fix the row, then flip its Status back to **Pending** and request a run.
 
