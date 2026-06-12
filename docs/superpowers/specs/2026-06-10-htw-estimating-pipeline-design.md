@@ -99,6 +99,8 @@ Canonical finish unit: **1-sided-equivalent SF**. The finisher's 2-sided rate is
 
 **Dimension sourcing:** depth from plan view; width/height from elevations; standards as defaults (base 24"D, uppers 12"D, etc.) with per-cabinet overrides when drawings show custom; shelf counts by the rules above unless the elevation/section shows otherwise.
 
+**Where ASM parameters live (confirmed by testing 2026-06-12):** the spec originally assumed the parameter template would ride in the markup's comment. Real-Revu testing proved this WRONG — count-type markups commandeer the comment field for the running count ("1"), overwriting any template on placement. **Resolution: a dedicated `Assembly Params` custom Text column (schema index 6, appended after Sell Price).** Claude writes the captured dimensions there as it places each ASM marker (e.g. `W36 H84 D24 SH3`); the estimator reviews/corrects in the same column at gate 1; the expansion engine reads it by column name. Round-trip verified via the Bluebeam API (set → read). The schema is now **7 columns** — the canonical import file is `HTW Custom Columns - 7 Col (2026-06-12).xml` and the profile (HTW - Estimating) carries it. Appending at index 6 does NOT shift the money columns (0–5) and existing 6-slot tool arrays read the new column as empty — no tool .btx change needed; tools stay 6-slot (Assembly Params is per-markup data, never a tool preset, so `btx` preset machinery keeps its 6-slot guard unchanged).
+
 The rulebook ships as versioned, unit-tested code in the takeoff skill, plus a human-readable reference doc. Estimator corrections at the gates feed rulebook revisions.
 
 ## 7. Autonomous takeoff engine (passes)
