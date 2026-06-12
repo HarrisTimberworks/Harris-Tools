@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // test-quote-engine.js — hermetic; no API, no token needed.
+const fs = require('fs');
+const path = require('path');
 const reb = require('./rebalance-schedule.js');
 
 const failures = [];
@@ -34,5 +36,80 @@ check('non-numeric weeks named', lintQuotePolicy({ preProductionWeeks: 'two', mi
 check('clean policy lints clean', lintQuotePolicy(policy).length === 0,
   JSON.stringify(lintQuotePolicy(policy)));
 
-console.log(failures.length ? `\n❌ ${failures.length}/${checks} FAILED` : `\n✅ all ${checks} checks passed`);
-process.exit(failures.length ? 1 : 0);
+// ---- shared fixture helpers (used by Tasks 5-7 tests) ----
+const { toISO: _toISO, getMondayOfWeek: _gmw, addDays: _addDays, parseISO: _parseISO } =
+  require('./rebalance-schedule.js');
+function mondayWeeksFromNow(n) { return _toISO(_addDays(_gmw(new Date()), n * 7)); }
+// Crew parents for every crew × week over the next `weeks` weeks, full base hours.
+function makeCrewParents(weeks) {
+  const { CREW_BASE_HOURS: CBH, BOB_START_DATE: BSD, CREW_END_DATES: CED } = require('./rebalance-schedule.js');
+  const rows = [];
+  let id = 1;
+  for (let w = 0; w < weeks; w++) {
+    const week = mondayWeeksFromNow(w);
+    for (const crew of Object.keys(CBH)) {
+      if (crew === 'Bob' && week < BSD) continue;
+      if (CED[crew] && week >= _toISO(_gmw(_parseISO(CED[crew])))) continue;
+      rows.push({ parentId: `fix-${id++}`, week, crew, base: CBH[crew], timeOff: 0, nonProd: 0 });
+    }
+  }
+  return rows;
+}
+function emptyBoards(parentWeeks = 16) {
+  return { jobs: [], crewParents: makeCrewParents(parentWeeks), timeOff: [], existingSubs: [], overrideRows: [] };
+}
+
+console.log('Test 4: buildSyntheticJob carries every load-bearing field (spec §4.1)');
+const { buildSyntheticJob, quoteRunPlan, withSyntheticParents } = require('./quote-engine.js');
+const sj = buildSyntheticJob(
+  { rowId: '999', name: 'Test Quote', jobType: 'Res - Face Frame', boxes: 25, complexity: 2 },
+  loadQuotePolicy(), mondayWeeksFromNow(10));
+check('id sentinel', sj.id === 'QUOTE-999', sj.id);
+check('status in planner allowlist', sj.status === 'Scheduled', sj.status);
+check('subtype is ROUTING key', sj.subtype === 'Res - Face Frame', sj.subtype);
+check('delivery set', sj.delivery === mondayWeeksFromNow(10), sj.delivery);
+check('hours from model', sj.hours.eng === 15 && sj.hours.prefin === 27.5, JSON.stringify(sj.hours));
+check('finishingDays from policy', sj.finishingDays === 5, String(sj.finishingDays));
+check('pLam false, masterPmId null, customWindow null',
+  sj.pLam === false && sj.masterPmId === null && sj.customWindow === null);
+
+console.log('Test 5: withSyntheticParents fills beyond-coverage weeks, never mutates input');
+const shortBoards = emptyBoards(4); // parents only 4 weeks out
+const before = shortBoards.crewParents.length;
+const synth = withSyntheticParents(shortBoards, sj, { now: () => new Date() });
+check('input untouched', shortBoards.crewParents.length === before);
+check('synthetic rows added', synth.length > before, `${synth.length} <= ${before}`);
+check('synthetic rows shaped like real ones',
+  synth.filter(p => String(p.parentId).startsWith('synthetic-'))
+       .every(p => p.week && p.crew && typeof p.base === 'number' && p.timeOff === 0 && p.nonProd === 0));
+check('no synthetic Bob before start date',
+  !synth.some(p => String(p.parentId).startsWith('synthetic-') && p.crew === 'Bob' && p.week < '2026-05-18'));
+
+console.log('Test 6: quoteRunPlan — synthetic job actually PLACES (the silent-drop guard)');
+(async () => {
+  const boards = emptyBoards(16);
+  const report = await quoteRunPlan(boards, sj);
+  const quotePlacements = (report.placements || []).filter(p => p.jobId === 'QUOTE-999');
+  const placedHours = quotePlacements.reduce((s, p) => s + (p.hours || 0), 0);
+  const stationSum = Object.values(sj.hours).reduce((s, h) => s + h, 0);
+  check('placements exist for the synthetic job', quotePlacements.length > 0,
+    `0 placements — synthetic job silently dropped (status filter?)`);
+  check('full station hours + 4h P&S/Delivery placed', placedHours >= stationSum + 4 - 0.01,
+    `placed ${placedHours} of ${stationSum + 4}`);
+
+  console.log('Test 7: quoteRunPlan structurally cannot write a plan file');
+  const logsDir = path.join(__dirname, '..', 'logs');
+  const beforeFiles = new Set(fs.existsSync(logsDir) ? fs.readdirSync(logsDir) : []);
+  await quoteRunPlan(emptyBoards(16), sj);
+  const afterFiles = fs.existsSync(logsDir) ? fs.readdirSync(logsDir) : [];
+  check('no new rebalance-plan-*.json in logs/',
+    !afterFiles.some(f => f.startsWith('rebalance-plan-') && !beforeFiles.has(f)),
+    'quoteRunPlan wrote a plan file — savePath guard broken');
+
+  console.log('Test 8: quoteRunPlan(boards, null) = baseline, no synthetic job');
+  const base = await quoteRunPlan(emptyBoards(16), null);
+  check('baseline has no QUOTE placements', !(base.placements || []).some(p => String(p.jobId).startsWith('QUOTE-')));
+
+  console.log(failures.length ? `\n❌ ${failures.length}/${checks} FAILED` : `\n✅ all ${checks} checks passed`);
+  process.exit(failures.length ? 1 : 0);
+})();
