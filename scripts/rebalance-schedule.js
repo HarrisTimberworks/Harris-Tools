@@ -2327,6 +2327,12 @@ module.exports = {
   scheduleStation,
   allocateStationWeek,
   SOFT_CAP_MULTIPLIER,
+  // Quote engine (Lead Time Calculator V2) — synthetic crew-parent injection
+  // needs the same capacity constants the planner uses; exporting beats
+  // duplication (see 2026-06-12 spec §4.1 and the shared-constants backlog).
+  CREW_BASE_HOURS,
+  BOB_START_DATE,
+  CREW_END_DATES,
 };
 
 // ============================================================================
