@@ -1,4 +1,7 @@
-"""Generate tool_catalog.json — the registry Claude places markups from."""
+"""Generate tool_catalog.json — the registry Claude places markups from.
+
+Subject uniqueness across chests is NOT guaranteed; consumers building
+subject-keyed lookups must check duplicate_subjects first."""
 import glob
 import json
 import os
@@ -24,7 +27,12 @@ def build(chest_dir, rows, out_path, version=None):
                 "raw_cost": float(row.raw_cost) if row else None,
                 "status": row.status if row else "missing-from-library",
             })
+    seen = {}
+    dupes = sorted({t["subject"] for t in tools
+                    if seen.setdefault(t["subject"], t["chest"]) !=
+                    t["chest"]})
     payload = {"version": version or date.today().isoformat(),
+               "duplicate_subjects": dupes,
                "tools": tools}
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=1)

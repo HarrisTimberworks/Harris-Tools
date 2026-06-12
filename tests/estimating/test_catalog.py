@@ -32,3 +32,24 @@ def test_catalog_marks_tools_without_library_rows(make_chest, tmp_path):
     catalog.build(tmp_path, [], out)
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["tools"][0]["status"] == "missing-from-library"
+
+
+def test_catalog_version_flows_through_and_dupes_detected(make_chest,
+                                                          tmp_path):
+    make_chest("HTW-R 01 AAA", [{"subject": "X", "unit": "EA",
+                                 "uc": "1.00"}])
+    make_chest("HTW-R 02 BBB", [{"subject": "X", "unit": "EA",
+                                 "uc": "2.00"}])
+    out = tmp_path / "tool_catalog.json"
+    data = catalog.build(tmp_path, [], out, version="v-test")
+    assert data["version"] == "v-test"
+    assert data["duplicate_subjects"] == ["X"]
+    assert len(data["tools"]) == 2
+
+
+def test_catalog_no_dupes_is_empty_list(make_chest, tmp_path):
+    make_chest("HTW-R 01 AAA", [{"subject": "X", "unit": "EA",
+                                 "uc": "1.00"}])
+    out = tmp_path / "tool_catalog.json"
+    data = catalog.build(tmp_path, [], out, version="v")
+    assert data["duplicate_subjects"] == []
