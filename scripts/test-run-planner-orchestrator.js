@@ -933,6 +933,72 @@ function makeFakeBoards() {
     check('DRY_RUN: would-flip logged', /would set .*Ship Me.*Ready to Ship/i.test(dry.blob), dry.blob.slice(-400));
   }
 
+  console.log('\nTest 16c: SHOP-FLOOR PROGRESS — progressWarnings surfaced; board Hrs Left blocks RTS flip');
+  {
+    // Verifies that shopProgressWarnings runs and its output is:
+    //   1. Printed under === SHOP-FLOOR PROGRESS === in console.
+    //   2. Returned in result.progressWarnings.
+    //   3. Does NOT cause a Ready-to-Ship flip when board Hrs Left (hrsLeft)
+    //      shows remaining work that formula says is done (bench formula=0 but ⏳5).
+    const empty = { eng: null, panel: null, bench: null, prefin: null, postfin: null };
+    const mkBoards16c = () => {
+      const b = makeFakeBoards();
+      b.jobs = [
+        // 1) Would flip RTS on ticks alone, but bench (formula 0) carries ⏳5 → must NOT flip.
+        { id: 'PL-HL-BLOCK', masterPmId: 'MPM-HLB', name: 'Blocked By Board Hours', delivery: '2026-06-26', status: 'Finishing',
+          formulaHours: { eng: 4, panel: 8, bench: 0, prefin: 0, postfin: 5 },
+          stationsComplete: ['Eng', 'Panel', 'PostFin'],
+          hrsLeft: { ...empty, bench: 5 },
+          hours: { eng: 0, panel: 0, bench: 5, prefin: 0, postfin: 0 } },
+        // 2) ⏳0 unticked → nudge warning.
+        { id: 'PL-HL-NUDGE', masterPmId: 'MPM-HLN', name: 'Nudge Me', delivery: '2026-07-02', status: 'Scheduled',
+          formulaHours: { eng: 4, panel: 8, bench: 10, prefin: 0, postfin: 5 },
+          stationsComplete: [],
+          hrsLeft: { ...empty, panel: 0 },
+          hours: { eng: 4, panel: 0, bench: 10, prefin: 0, postfin: 5 } },
+      ];
+      return b;
+    };
+    const run16c = async (env) => {
+      const gqlCalls = [];
+      const stubGql = async (q, v) => { gqlCalls.push({ q, v }); return {}; };
+      let pass = 0;
+      const fakeFs = makeFakeFs();
+      const captured = [];
+      const realLog = console.log; console.log = (...a) => captured.push(a.join(' '));
+      const prevEnv = process.env.DRY_RUN;
+      if (env) process.env.DRY_RUN = '1'; else delete process.env.DRY_RUN;
+      let result;
+      try {
+        result = await runPlanner({ mode: 'plan', deps: {
+          loadAll: async () => mkBoards16c(),
+          runPlan: async () => (++pass, { mode: 'plan',
+            placements: [],
+            capacityGrid: {}, warnings: [] }),
+          validateAll: () => ({ accepted: [], conflicts: [] }),
+          writeRowDecisions: async () => ({ written: 0, skipped: 0, errors: [] }),
+          gqlFn: stubGql,
+          fs: fakeFs.fs, logsDir: '/fake/logs', now: () => new Date('2026-06-12T20:00:00Z'),
+        } });
+      } finally {
+        console.log = realLog;
+        if (prevEnv === undefined) delete process.env.DRY_RUN; else process.env.DRY_RUN = prevEnv;
+      }
+      return { gqlCalls, blob: captured.join('\n'), result };
+    };
+
+    const live = await run16c(false);
+    check('console prints SHOP-FLOOR PROGRESS section', /=== SHOP-FLOOR PROGRESS ===/.test(live.blob), live.blob.slice(-600));
+    check('result carries progressWarnings array', Array.isArray(live.result.progressWarnings), typeof live.result.progressWarnings);
+    check('nudge warning present', live.result.progressWarnings.some(w => /Nudge Me Panel/.test(w)), JSON.stringify(live.result.progressWarnings));
+    check('board-added-work info present (bench ⏳5 > formula 0)',
+      live.result.progressWarnings.some(w => /Blocked By Board Hours Bench/.test(w)), JSON.stringify(live.result.progressWarnings));
+    check('exactly 2 warnings', live.result.progressWarnings.length === 2, JSON.stringify(live.result.progressWarnings));
+    check('NO RTS flip (bench ⏳5 blocks despite all formula>0 ticks)',
+      live.gqlCalls.filter(c => /change_multiple_column_values/.test(c.q) && /Ready to Ship/.test(JSON.stringify(c.v))).length === 0,
+      JSON.stringify(live.gqlCalls.map(c => c.v)));
+  }
+
   console.log('\nTest 17: C8 — execute mode never touches writers or tuple derivation');
   {
     const stubs = makeOutputStubs();
