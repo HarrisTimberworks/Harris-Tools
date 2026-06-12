@@ -163,6 +163,27 @@ console.log('\nTest 3 (no force): shortfall that rolls forward and lands later i
   check('result.unplaced == 0', Math.abs(result.unplaced) < 0.01, `unplaced=${result.unplaced}`);
 }
 
+console.log('\nTest 4 (spec 2026-06-12 §Code 4): force exceeding board-shrunk remaining warns + places, never throws');
+{
+  // Shop floor reports ⏳ Hrs Left = 10 while a 31.5h force is pinned: the
+  // station budget (10) is below the force. PATCH-5 behavior: place the
+  // force (operator pin wins), warn loudly, clamp budget tracking, no throw.
+  const grid = buildGrid({ bobW2Committed: 0 });
+  const job = syntheticJob(FORCED_JOB_ID);
+  let result, threw = null;
+  try {
+    result = scheduleStation(grid, job, 'Benchwork', 10, W2, W2);
+  } catch (e) { threw = e; }
+  check('no throw', threw === null, threw && threw.message);
+  const forced = (result?.placements || []).filter(p => p.forced);
+  check('force still placed in full (31.5h, placements stand)',
+        forced.length === 1 && Math.abs(forced[0].hours - 31.5) < 0.01, JSON.stringify(forced));
+  check('budget warning emitted',
+        (result?.warnings || []).some(w => /exceeds remaining job budget/.test(w)),
+        JSON.stringify(result?.warnings));
+  check('no spurious unplaced hours', Math.abs(result?.unplaced || 0) < 0.01, `unplaced=${result?.unplaced}`);
+}
+
 console.log();
 if (failures.length > 0) {
   console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

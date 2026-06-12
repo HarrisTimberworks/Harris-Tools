@@ -6,19 +6,25 @@
  * labels Eng/Panel/Bench/PreFin/PostFin) lets the shop mark each station
  * done in real time. Pure helpers under test:
  *
- *   computeRemainingHours(formulaHours, overrideRemaining, stationsComplete)
+ *   computeRemainingHours(formulaHours, overrideRemaining, stationsComplete, hrsLeft)
  *     Precedence per station: board-done → 0 (ALWAYS wins, kills config
- *     staleness) → else config remainingHours → else formula.
+ *     staleness) → else board ⏳ Hrs Left (valid number ≥ 0, verbatim,
+ *     never clamped) → else config remainingHours → else formula.
  *
- *   isReadyToShip(formulaHours, stationsComplete)
- *     True when EVERY station with formula hours > 0 is marked done.
- *     Drives the derived "Ready to Ship" status (planner keeps the job
- *     active so P&S/Delivery still plan — the Liz Stapp Complete-cliff fix).
+ *   isReadyToShip(formulaHours, stationsComplete, hrsLeft)
+ *     True when EVERY required station is marked done. Required = formula
+ *     hours > 0 OR board ⏳ Hrs Left > 0 (board-added work can't be
+ *     skipped). Drives the derived "Ready to Ship" status (planner keeps
+ *     the job active so P&S/Delivery still plan — the Liz Stapp
+ *     Complete-cliff fix).
  */
 
 const {
   computeRemainingHours,
   isReadyToShip,
+  isValidHrsLeft,
+  parseHrsLeftCell,
+  shopProgressWarnings,
   STATION_LABEL_TO_KEY,
 } = require('./rebalance-schedule.js');
 
@@ -88,6 +94,106 @@ const FORMULA = { eng: 8.6, panel: 19.5, bench: 2.3, prefin: 0, postfin: 13.5 };
     check('all-zero formulas → false (defensive: nothing to complete ≠ ready)',
       isReadyToShip({ eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 }, ['Eng']) === false, '');
     check('missing args safe', isReadyToShip(undefined, undefined) === false, '');
+  }
+
+  console.log('\nTest 7: ⏳ Hrs Left tier — between tick and config');
+  {
+    const HL = { eng: 7, panel: 5, bench: 0, prefin: null, postfin: 12 };
+    const CFG = { eng: 4, panel: 8, bench: 2.3, prefin: 6, postfin: 5 };
+    const h = computeRemainingHours(FORMULA, CFG, ['Eng'], HL);
+    check('tick beats Hrs Left (Eng 0 despite ⏳7)', h.eng === 0, JSON.stringify(h));
+    check('Hrs Left beats config (Panel 5 not 8)', h.panel === 5, JSON.stringify(h));
+    check('explicit 0 honored (Bench 0 not 2.3)', h.bench === 0, JSON.stringify(h));
+    check('empty cell falls through to config (PreFin 6)', h.prefin === 6, JSON.stringify(h));
+    check('Hrs Left beats config (PostFin 12 not 5)', h.postfin === 12, JSON.stringify(h));
+  }
+
+  console.log('\nTest 8: ⏳ Hrs Left — formula fallback, overrun unclamped, invalid ignored, back-compat');
+  {
+    const h0 = computeRemainingHours(FORMULA, null, [], { eng: null, panel: null, bench: 1, prefin: null, postfin: null });
+    check('no config: Hrs Left beats formula (Bench 1 not 2.3)', h0.bench === 1 && h0.panel === 19.5, JSON.stringify(h0));
+    const h1 = computeRemainingHours(FORMULA, null, [], { eng: null, panel: 99, bench: null, prefin: null, postfin: null });
+    check('overrun passes verbatim (99 > formula 19.5, never clamped)', h1.panel === 99, JSON.stringify(h1));
+    const h2 = computeRemainingHours(FORMULA, null, [], { eng: -3, panel: NaN, bench: null, prefin: null, postfin: null });
+    check('negative ignored → formula', h2.eng === 8.6, JSON.stringify(h2));
+    check('NaN ignored → formula', h2.panel === 19.5, JSON.stringify(h2));
+    const h3 = computeRemainingHours(FORMULA, null, []);
+    check('missing 4th arg ≡ legacy behavior', h3.panel === 19.5 && h3.eng === 8.6, JSON.stringify(h3));
+  }
+
+  console.log('\nTest 9: isReadyToShip — ⏳ required-set extension');
+  {
+    const F = { eng: 4, panel: 8, bench: 0, prefin: 0, postfin: 5 };
+    check('legacy 2-arg: all formula>0 ticked → true',
+      isReadyToShip(F, ['Eng', 'Panel', 'PostFin']) === true, '');
+    check('board-added work blocks RTS (bench formula 0, ⏳5, unticked)',
+      isReadyToShip(F, ['Eng', 'Panel', 'PostFin'], { bench: 5 }) === false, '');
+    check('ticking the board-added station restores RTS (tick wins per spec)',
+      isReadyToShip(F, ['Eng', 'Panel', 'PostFin', 'Bench'], { bench: 5 }) === true, '');
+    check('⏳0 does not add a required station',
+      isReadyToShip(F, ['Eng', 'Panel', 'PostFin'], { bench: 0 }) === true, '');
+    check('all-zero formulas + empty hrsLeft → still false',
+      isReadyToShip({ eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 }, ['Eng'], {}) === false, '');
+    check('⏳-only required set: all-zero formulas + ⏳5 unticked → false',
+      isReadyToShip({ eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 }, [], { bench: 5 }) === false, '');
+    check('⏳-only required set: ticking the station completes it → true',
+      isReadyToShip({ eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 }, ['Bench'], { bench: 5 }) === true, '');
+  }
+
+  console.log('\nTest 10: parseHrsLeftCell — monday numbers-column text');
+  {
+    check('empty string → null (empty cell ≠ 0)', parseHrsLeftCell('') === null, '');
+    check('undefined → null', parseHrsLeftCell(undefined) === null, '');
+    check('whitespace → null', parseHrsLeftCell('  ') === null, '');
+    check('"0" → 0 (explicit zero)', parseHrsLeftCell('0') === 0, '');
+    check('"102" → 102', parseHrsLeftCell('102') === 102, '');
+    check('"2.3" → 2.3', parseHrsLeftCell('2.3') === 2.3, '');
+    check('"1,234" → 1234 (thousands separator)', parseHrsLeftCell('1,234') === 1234, '');
+    check('"-5" → -5 (sanitized downstream by isValidHrsLeft)', parseHrsLeftCell('-5') === -5, '');
+    check('isValidHrsLeft rejects null/-5/NaN, accepts 0/2.3',
+      !isValidHrsLeft(null) && !isValidHrsLeft(-5) && !isValidHrsLeft(NaN)
+      && isValidHrsLeft(0) && isValidHrsLeft(2.3), '');
+    check('isValidHrsLeft rejects strings and Infinity (type-strict gate)',
+      !isValidHrsLeft('5') && !isValidHrsLeft(Infinity) && !isValidHrsLeft(parseHrsLeftCell('Infinity')), '');
+  }
+
+  console.log('\nTest 11: shopProgressWarnings — nudges, contradictions, overrun info');
+  {
+    const F = { eng: 4, panel: 8, bench: 10, prefin: 0, postfin: 5 };
+    const empty = { eng: null, panel: null, bench: null, prefin: null, postfin: null };
+    const jobs = [
+      { name: 'NudgeJob', status: 'Scheduled', formulaHours: F,
+        stationsComplete: [], hrsLeft: { ...empty, panel: 0 } },
+      { name: 'ContraJob', status: 'Finishing', formulaHours: F,
+        stationsComplete: ['Bench'], hrsLeft: { ...empty, bench: 6 } },
+      { name: 'OverrunJob', status: 'Not Started', formulaHours: F,
+        stationsComplete: [], hrsLeft: { ...empty, panel: 30 } },
+      { name: 'InvalidJob', status: 'Scheduled', formulaHours: F,
+        stationsComplete: [], hrsLeft: { ...empty, eng: -2 } },
+      { name: 'CompleteJob', status: 'Complete', formulaHours: F,
+        stationsComplete: [], hrsLeft: { ...empty, panel: 0 } },
+      { name: 'QuietJob', status: 'Scheduled', formulaHours: F,
+        stationsComplete: [], hrsLeft: { ...empty, panel: 5 } },
+      { name: 'PriorityContraOverOverrun', status: 'Scheduled', formulaHours: F,
+        stationsComplete: ['Bench'], hrsLeft: { ...empty, bench: 12 } },
+      { name: 'PriorityInvalidOverContra', status: 'Scheduled', formulaHours: F,
+        stationsComplete: ['Bench'], hrsLeft: { ...empty, bench: -2 } },
+    ];
+    const w = shopProgressWarnings(jobs);
+    check('tick nudge fired', w.some(x => /NudgeJob Panel: .*0 but station not ticked/.test(x)), JSON.stringify(w));
+    check('contradiction fired (tick wins)', w.some(x => /ContraJob Bench: ticked complete but/.test(x)), JSON.stringify(w));
+    check('overrun info fired', w.some(x => /OverrunJob Panel: .*30 exceeds formula 8/.test(x)), JSON.stringify(w));
+    check('invalid value fired', w.some(x => /InvalidJob Eng: invalid/.test(x)), JSON.stringify(w));
+    check('Complete jobs skipped', !w.some(x => /CompleteJob/.test(x)), JSON.stringify(w));
+    check('healthy partial entry silent (5 < formula 8)', !w.some(x => /QuietJob/.test(x)), JSON.stringify(w));
+    check('priority: contradiction beats overrun (ticked + 12 > formula 10)',
+      w.some(x => /PriorityContraOverOverrun Bench: ticked complete but/.test(x))
+      && !w.some(x => /PriorityContraOverOverrun Bench: .*exceeds formula/.test(x)), JSON.stringify(w));
+    check('priority: invalid beats contradiction (ticked + -2)',
+      w.some(x => /PriorityInvalidOverContra Bench: invalid/.test(x))
+      && !w.some(x => /PriorityInvalidOverContra Bench: ticked complete/.test(x)), JSON.stringify(w));
+    check('exactly 6 warnings', w.length === 6, JSON.stringify(w));
+    check('null/empty jobs safe', Array.isArray(shopProgressWarnings(null)) && shopProgressWarnings([]).length === 0, '');
   }
 
   console.log();

@@ -83,6 +83,13 @@ const COL_PL = {
   // labels Eng/Panel/Bench/PreFin/PostFin). Board-done beats config beats
   // formula; see computeRemainingHours.
   stationsComplete: 'dropdown_mm48p4zs',
+  // 2026-06-12 — shop-floor partial progress (⏳ Hrs Left, numbers columns).
+  // Empty cell = no info; see computeRemainingHours precedence.
+  hrsLeftEng: 'numeric_mm48nt96',
+  hrsLeftPanel: 'numeric_mm48k3hx',
+  hrsLeftBench: 'numeric_mm48wd7g',
+  hrsLeftPrefin: 'numeric_mm48tc2s',
+  hrsLeftPostfin: 'numeric_mm483bra',
 };
 
 // ============================================================================
@@ -99,27 +106,84 @@ const STATION_LABEL_TO_KEY = Object.freeze({
 const STATION_HOUR_KEYS = Object.freeze(['eng', 'panel', 'bench', 'prefin', 'postfin']);
 
 // Per-station precedence: board-done → 0 (ALWAYS wins — the board is live
-// shop-floor truth and kills config staleness) → else config remainingHours
-// → else formula. Unknown labels are ignored.
-function computeRemainingHours(formulaHours, overrideRemaining, stationsComplete) {
+// shop-floor truth and kills config staleness) → else board ⏳ Hrs Left (a
+// non-empty cell is the shop's current remaining estimate, verbatim — may
+// exceed the formula on overruns, never clamped; spec 2026-06-12) → else
+// config remainingHours → else formula. Unknown labels are ignored.
+function computeRemainingHours(formulaHours, overrideRemaining, stationsComplete, hrsLeft) {
   const done = new Set((stationsComplete || []).map(l => STATION_LABEL_TO_KEY[l]).filter(Boolean));
   const base = overrideRemaining && overrideRemaining !== null ? overrideRemaining : (formulaHours || {});
+  const hl = hrsLeft || {};
   const out = {};
   for (const k of STATION_HOUR_KEYS) {
-    out[k] = done.has(k) ? 0 : Number(base[k] || 0);
+    if (done.has(k)) { out[k] = 0; continue; }
+    out[k] = isValidHrsLeft(hl[k]) ? hl[k] : Number(base[k] || 0);
   }
   return out;
+}
+
+// A usable ⏳ Hrs Left value: finite number ≥ 0. Anything else (null for an
+// empty cell, NaN, negatives) falls through to config/formula;
+// shopProgressWarnings surfaces the garbage.
+function isValidHrsLeft(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+}
+
+// monday numbers-column text → null (empty cell = "no board info") or a
+// number. May return NaN/negative/Infinity for garbage — isValidHrsLeft
+// gates use.
+function parseHrsLeftCell(text) {
+  const t = (text ?? '').trim();
+  return t === '' ? null : parseFloat(t.replace(/,/g, ''));
+}
+
+// Run-summary warnings for the ⏳ Hrs Left columns (spec 2026-06-12).
+// Summary-only: never blocks the run, never triggers a notification.
+const PROGRESS_WARN_STATUSES = new Set([
+  'Not Started', 'Ready to Schedule', 'Scheduled', 'Finishing', 'Ready to Ship',
+]);
+const STATION_KEY_TO_LABEL = Object.freeze(
+  Object.fromEntries(Object.entries(STATION_LABEL_TO_KEY).map(([l, k]) => [k, l])));
+
+function shopProgressWarnings(jobs) {
+  const warnings = [];
+  for (const j of jobs || []) {
+    if (!PROGRESS_WARN_STATUSES.has(j.status)) continue;
+    const done = new Set((j.stationsComplete || []).map(l => STATION_LABEL_TO_KEY[l]).filter(Boolean));
+    const hl = j.hrsLeft || {};
+    for (const k of STATION_HOUR_KEYS) {
+      const v = hl[k];
+      if (v === null || v === undefined) continue;
+      const label = STATION_KEY_TO_LABEL[k];
+      const f = Number((j.formulaHours || {})[k] || 0);
+      if (!isValidHrsLeft(v)) {
+        warnings.push(`${j.name} ${label}: invalid ⏳ Hrs Left (${v}) ignored — falls back to tick/config/formula precedence`);
+      } else if (done.has(k) && v > 0) {
+        warnings.push(`${j.name} ${label}: ticked complete but ⏳ Hrs Left is ${v} — tick wins (0 hrs); clear the cell or untick`);
+      } else if (!done.has(k) && v === 0) {
+        warnings.push(`${j.name} ${label}: ⏳ Hrs Left is 0 but station not ticked — tick ✅ Stations Complete if truly done`);
+      } else if (v > f + 1e-9) {
+        warnings.push(`${j.name} ${label}: ⏳ Hrs Left ${v} exceeds formula ${f} — overrun or change order pending (info)`);
+      }
+    }
+  }
+  return warnings;
 }
 
 // True when EVERY station with formula hours > 0 is marked done. Drives the
 // derived "Ready to Ship" status in run-planner.js: production is finished
 // but the job stays ACTIVE so P&S/Delivery keep planning (the Liz Stapp
 // Complete-cliff fix — flipping straight to Complete dropped jobs while
-// delivery work remained). All-zero formulas → false (nothing to complete
-// is not the same as ready).
-function isReadyToShip(formulaHours, stationsComplete) {
+// delivery work remained). An empty required set → false (nothing to
+// complete is not the same as ready).
+// 2026-06-12: a station with board ⏳ Hrs Left > 0 also counts as required
+// even at formula 0 — board-added work can't be skipped by the RTS flip.
+function isReadyToShip(formulaHours, stationsComplete, hrsLeft) {
   const done = new Set((stationsComplete || []).map(l => STATION_LABEL_TO_KEY[l]).filter(Boolean));
-  const required = STATION_HOUR_KEYS.filter(k => Number((formulaHours || {})[k] || 0) > 0);
+  const hl = hrsLeft || {};
+  const required = STATION_HOUR_KEYS.filter(k =>
+    Number((formulaHours || {})[k] || 0) > 0
+    || (isValidHrsLeft(hl[k]) && hl[k] > 0));
   if (required.length === 0) return false;
   return required.every(k => done.has(k));
 }
@@ -450,12 +514,23 @@ async function loadJobs(gqlFn = gql) {
     const stationsComplete = (cv[COL_PL.stationsComplete]?.text || '')
       .split(',').map(s => s.trim()).filter(Boolean);
 
-    const hours = computeRemainingHours(formulaHours, override.remainingHours || null, stationsComplete);
+    // ⏳ Hrs Left (2026-06-12): shop-floor remaining-hours estimate per
+    // station. Empty cell → null (falls through to config/formula).
+    const hrsLeft = {
+      eng: parseHrsLeftCell(cv[COL_PL.hrsLeftEng]?.text),
+      panel: parseHrsLeftCell(cv[COL_PL.hrsLeftPanel]?.text),
+      bench: parseHrsLeftCell(cv[COL_PL.hrsLeftBench]?.text),
+      prefin: parseHrsLeftCell(cv[COL_PL.hrsLeftPrefin]?.text),
+      postfin: parseHrsLeftCell(cv[COL_PL.hrsLeftPostfin]?.text),
+    };
+
+    const hours = computeRemainingHours(formulaHours, override.remainingHours || null, stationsComplete, hrsLeft);
 
     return {
       id: it.id,
       name: it.name,
       stationsComplete,
+      hrsLeft,
       status: cv[COL_PL.status]?.text || 'Not Started',
       subtype: cv[COL_PL.subtype]?.text || 'Commercial',
       delivery: cv[COL_PL.delivery]?.display_value || null,
@@ -2294,6 +2369,9 @@ module.exports = {
   SECONDARY,
   // Stations-Complete tracking (2026-06-11).
   computeRemainingHours,
+  isValidHrsLeft,
+  parseHrsLeftCell,
+  shopProgressWarnings,
   isReadyToShip,
   STATION_LABEL_TO_KEY,
   // Audit fixes (2026-06-11).

@@ -379,14 +379,7 @@
   "skipJobs": [
     "11693166519"
   ],
-  "crewExclusions": {
-    "Paisios": {
-      "excludeJobs": [
-        "11835189937"
-      ],
-      "reason": "CU-specific bench work — keep Paisios off Roster 5 P2"
-    }
-  },
+  "crewExclusions": {},
   "forceAssignments": [
     {
       "crew": "Chris",
