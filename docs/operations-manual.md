@@ -17,6 +17,8 @@ You mostly *feed it facts*; it does the rest.
 | Daily 6:00 AM | Rollups: Time Off hours, Command Center non-production hours, cross-training audit. |
 | Daily 8:15 AM | Manual Overrides board housekeeping: override rows whose week has passed are moved to the Stale group (never-run Pending rows are auto-Cleared). |
 | On every planning run | Override rows are validated and stamped Applied/Conflict; jobs with all stations done flip to **Ready to Ship**; new **Ready to Schedule** jobs that got planned flip to **Scheduled**; both output docs regenerate; the trigger item gets a run-summary update. |
+| Every minute | The same poll also answers 💬 Quote rows: any quote at **Quote Requested** is computed against live shop load and answered on the row (~1–2 min; up to 3 per minute). |
+| On every planning run | Current dealer lead-times artifacts regenerate (`logs/lead-times.json` + HTML snippet) from the reference basket in `config/quote-policy.json`. |
 | When something needs a human | Chris gets a monday notification: override conflicts, planner errors, doc-write failures, config errors, a skipped Saturday run, or any deploy. Clean runs are silent. |
 
 **Requires:** Chris's machine on and awake. If it's asleep, requests wait at "Run Requested" until it wakes.
@@ -92,6 +94,18 @@ The run flips the row to **Applied** (it's in the plan — look for 🔧 on the 
 
 Personal PTO → enter on the **Time Off Board** as usual (the 6 AM rollup feeds it to the planner). Shop-wide events (holidays, short weeks) → tell Chris; that's currently a config entry (§4.3).
 
+### 2.9 Get a lead-time quote (anyone, ~1 minute + ~2 minutes wait)
+
+1. Open the **🛠️ HTW Manual Overrides** board → **💬 Quotes** group → new item (name it after the prospect).
+2. Fill: **Job Type** (Res - Face Frame / Res - Frameless / Commercial), **Boxes**, **Complexity** (1–5; blank = 2). Optional: **Target Date** — fill it to ask "can we hit this date?", leave empty to ask "when's the earliest?"
+3. Set **Quote Status = Quote Requested**. Within a minute it flips to Quoting, then **Quoted** (~1–2 min).
+
+Read the result: **Quoted Week** is the number to give the client (policy floor applied). **Capacity Week** is what raw shop capacity says — when these differ, the floor in `config/quote-policy.json` is the reason. The item's update has the full breakdown (verdict, bottleneck if any, inputs, assumptions). **Confirm with the PM before communicating dates to clients.**
+
+**Quote Error?** The reason is on the item's update (bad input, or an engine failure — Chris is notified for the latter). Fix the row, set Quote Status back to **Quote Requested**. Re-quoting an old row works the same way — columns show the latest answer, updates keep the history.
+
+Quote rows are an audit trail — leave them; they never touch the schedule or the planner. (Never fill **To Week** or the overrides **Status** column on a quote row — those belong to override rows and their auto-stale automations.)
+
 ---
 
 ## 3. Reading the outputs
@@ -134,6 +148,13 @@ Routing chains, start dates (`BOB_START_DATE`), departures (`CREW_END_DATES`) li
 - **Task Scheduler:** `HTW Planner - Poll` (every minute) + `HTW Planner - Saturday` (Sat 6 PM), both S4U. XML exports + rebuild instructions in `task-scheduler/README.md`. **HTW Production Scheduler is retired — do not re-enable.**
 - **Logs:** `logs\planner-YYYY-MM-DD.log`; recovery artifacts `logs\capacity-view-*.md` / `weekly-briefing-*.md` (the writers save these before touching any doc).
 
+### 4.5 Quote policy (`config/quote-policy.json`) — commit immediately after every edit
+
+- `minLeadWeeks` per job type — the quoting floor. The engine always reports the honest capacity answer next to it; tighten/loosen the floor as the boards start carrying real pipeline.
+- `preProductionWeeks` — signing → engineering start (design/approval/deposit lag). Inside every quote.
+- `defaultFinishingDays`, `referenceBasket` — quote defaults + what the dealer artifact quotes.
+- Linted on every quote and planner run; lint failures notify you and quotes wait until fixed.
+
 ---
 
 ## 5. When something goes wrong
@@ -146,6 +167,8 @@ Routing chains, start dates (`BOB_START_DATE`), departures (`CREW_END_DATES`) li
 | Override row Conflict | The validator rejected it; reason is in the Conflict Reason column | Fix the row → Status Pending → re-run. |
 | A doc looks half-empty | A doc-write failed mid-replace | The full markdown is saved in `logs\` — re-run, or paste the artifact via monday UI. |
 | Numbers look wrong everywhere | Check the trigger updates for config-lint errors; check Stations Complete ticks vs reality | Chris. |
+| Quote row stuck **Quoting** >5 min | The quote died mid-flight (sleep/crash); self-heal flips it to Quote Error within ~5 min | Set back to **Quote Requested** to retry. |
+| Quote Error on every row + notification about quote-policy | `config/quote-policy.json` failed lint | Chris: fix the config, commit, rows retry on the next request. |
 
 **Never:** hand-edit Crew Allocation subitems for active jobs (a deploy overwrites them — use override rows instead); edit the generated docs; edit PLB window columns (display-only); set non-Monday weeks anywhere; put "Run/Deploy Requested" on an override **row** (trigger item only — a non-Pending row is skipped silently).
 
@@ -162,3 +185,5 @@ Routing chains, start dates (`BOB_START_DATE`), departures (`CREW_END_DATES`) li
 | 📊 Live Capacity View | doc 18410103423 |
 | 📋 Weekly Briefing | doc 18417309174 |
 | Repo / scripts / config / this manual | `C:\Users\chris\Harris-Tools` |
+| 💬 Quotes group / quote columns | Manual Overrides board 18413101550 (ids in config/planner-trigger.json) |
+| Dealer lead-times artifacts | logs/lead-times.json + lead-times-snippet.html |
