@@ -89,7 +89,9 @@ Canonical finish unit: **1-sided-equivalent SF**. The finisher's 2-sided rate is
 
 **Shelf-count rules:** base cabinet with top drawer → 1 adjustable shelf; base fully open (no top drawer) → 2 adjustable shelves; uppers → 12–13" maximum spacing, count derived from cabinet height.
 
-**Finished ends:** labor = existing FF FinEnd count factors (Flush vs FF FE variants); finish SF = D × H, 1-sided. **Open question for rulebook coding:** exact FF FE expansion (the legacy tool note `*Add Door Sf` implies the faux frame-and-door end adds door SF) — confirm formula with the estimator before coding.
+**Finished ends:** labor = existing FF FinEnd count factors (Flush vs FF FE variants); finish SF = D × H, 1-sided.
+
+**FF FE expansion (confirmed by Chris 2026-06-12):** the FF FE case is a finished end built as a faux face frame with a faux door. The marker expands to TWO components: (1) the FF FE labor factor (EA), and (2) SF pricing of a door-sized panel whose dimensions are the cabinet side minus 1.5" (the faux frame reveal) all the way around — i.e. (depth − 3") × (height − 3"). No geometry exists to trace; the panel is computed, same mechanism as closet loose panels. Per the legacy `*Add Door Sf` practice, the panel prices at the job's door-style SF factor — confirm the door-factor linkage rule (which door style when a room has several) during rulebook coding.
 
 **Loose panels / closets:** `ASM - Closet Run` marker carries a panel schedule (count × dims) read from elevation + plan; expands to panel material SF + finish SF per sidedness rules. Exact panel/finish interaction to confirm with the estimator during rulebook coding.
 
@@ -142,7 +144,7 @@ When plans spec a product with no Subject in catalog/library: Claude researches 
 | Layer auto-creation behavior unverified | Pilot verification item (§5.4) |
 | Mixed-scale detail sheets | Flagged for human, never guessed |
 | Library edited without sync | Drift tripwire in importer (detect, not prevent) |
-| FF FE / closet expansion formulas under-specified | Open questions named in §6; confirm with estimator before coding |
+| Closet panel/finish interaction + FF FE door-factor linkage under-specified | FF FE formula confirmed (§6); remaining details to confirm in the commercial deep-dive / rulebook coding session |
 | Positional BSIColumnData fragility | Column schema frozen (2026-06-10); library is canonical so presets are regenerable at any time |
 
 ## 13. Out of scope
