@@ -1,3 +1,5 @@
+import pytest
+
 from estimating import btx
 
 
@@ -51,3 +53,10 @@ def test_set_preset_refuses_non_six_slot_array(make_chest):
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_set_preset_rejects_delimiter_characters(make_chest):
+    p = make_chest("X", [{"subject": "A", "unit": "LF", "uc": "10.00"}])
+    ts = btx.read_toolset(p)
+    with pytest.raises(ValueError, match="delimiters"):
+        btx.set_preset_unit_cost(ts.tools[0], "8.50 (material)")

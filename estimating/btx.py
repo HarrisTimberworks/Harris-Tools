@@ -73,10 +73,14 @@ def read_toolset(path) -> ToolSet:
 
 def set_preset_unit_cost(tool: Tool, value: str):
     """Rewrite slot 0 (Unit Cost) of the 6-slot array in tool.raw + element."""
+    if "(" in value or ")" in value or "\\" in value:
+        raise ValueError(
+            f"preset value {value!r} contains PDF-string delimiters — "
+            f"pass a plain number string like '12.50'")
     if len(tool.col_tokens) != 6:
         raise ValueError(
             f"{tool.subject}: expected 6-slot BSIColumnData, "
-            f"found {len(tool.col_tokens)} — refusing (legacy-schema tool?)")
+            f"found {len(tool.col_tokens)} — refusing (legacy or unknown-schema tool)")
     tool.col_tokens[0] = f"({value})"
     new_block = "/BSIColumnData[" + "".join(tool.col_tokens) + "]"
     tool.raw = COL_RE.sub(lambda m: new_block, tool.raw, count=1)
