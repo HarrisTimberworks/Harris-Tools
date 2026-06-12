@@ -160,7 +160,7 @@ The scheduler uses this to auto-assign subitems. Keyed by [Job Subtype][Station]
 
 **Calibrated formulas (station hours):**
 - Eng Hrs: `formula_mm2dpf4n` — (FF × 0.6) + (FL × 0.4) + (backsplash × 0.005)
-- Panel Processing Hrs: `formula_mm2dxy2k` — (FF × 0.38) + (FL × 0.55) + (miter fold × 0.0167)
+- Panel Processing Hrs: `formula_mm2dxy2k` — (FF × 0.55) + (FL × 0.55) + (miter fold × 0.0167) *(corrected 2026-06-12 from live board formula — this doc previously said FF × 0.38; live formula also adds PP Override/Countertop SF, CU Panel, and Slab Veneer Doors × 0.05)*
 - Pre Fin Cab Assembly Hrs: `formula_mm2df4w1` — (FF × 1.10 × inset mult) + miter fold only
 - Post Fin Cab Assembly Hrs: `formula_mm2d5fmw` — ((FF × 0.45) + (FL × 0.65)) × inset mult
 - Benchwork Hrs: `formula_mm2d25dk` — ((FF × 0.3) + (FL × 0.15)) × benchwork mult + (backsplash × 0.05)
