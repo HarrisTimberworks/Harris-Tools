@@ -240,11 +240,11 @@
     },
     "11835189937": {
       "name": "MAG - Roster 5 — Custom Units (P2)",
-      "note": "Eng complete (40h done weeks 4/27 + 5/04). PHASE 1 release with full current CU hours (panel 22, bench 126, postfin 16). Massive change orders expected — these numbers will grow. 6/18 placeholder; revise when scope locked. | 2026-06-11: delivery moved to 7/02 (Ian departed); stale customWindows removed.",
+      "note": "Eng complete (40h done weeks 4/27 + 5/04). PHASE 1 release with full current CU hours (panel 22, bench 126, postfin 16). Massive change orders expected — these numbers will grow. 6/18 placeholder; revise when scope locked. | 2026-06-11: delivery moved to 7/02 (Ian departed); stale customWindows removed. | 2026-06-12: bench 126->102 — Spencer completed 24h wk 6/8 (operator: 16 of his 40 undone). Assumption: Bob 2h wk-6/8 bench NOT counted done.",
       "remainingHours": {
         "eng": 0,
         "panel": 22,
-        "bench": 126,
+        "bench": 102,
         "prefin": 0,
         "postfin": 16
       },
