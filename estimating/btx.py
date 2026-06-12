@@ -69,3 +69,23 @@ def read_toolset(path) -> ToolSet:
             col_tokens=TOKEN_RE.findall(col_m.group(1)) if col_m else [],
         ))
     return ToolSet(title=title, path=str(path), tools=tools, _tree=tree)
+
+
+def set_preset_unit_cost(tool: Tool, value: str):
+    """Rewrite slot 0 (Unit Cost) of the 6-slot array in tool.raw + element."""
+    if len(tool.col_tokens) != 6:
+        raise ValueError(
+            f"{tool.subject}: expected 6-slot BSIColumnData, "
+            f"found {len(tool.col_tokens)} — refusing (legacy-schema tool?)")
+    tool.col_tokens[0] = f"({value})"
+    new_block = "/BSIColumnData[" + "".join(tool.col_tokens) + "]"
+    tool.raw = COL_RE.sub(lambda m: new_block, tool.raw, count=1)
+    tool.element.find("Raw").text = zlib.compress(
+        tool.raw.encode("latin-1")).hex()
+
+
+def write_toolset(ts: ToolSet, path):
+    xml_bytes = ET.tostring(ts._tree.getroot(), encoding="utf-8",
+                            xml_declaration=True)
+    with open(path, "wb") as f:
+        f.write(b"\xef\xbb\xbf" + xml_bytes)
