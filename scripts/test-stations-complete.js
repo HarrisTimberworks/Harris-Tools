@@ -6,14 +6,17 @@
  * labels Eng/Panel/Bench/PreFin/PostFin) lets the shop mark each station
  * done in real time. Pure helpers under test:
  *
- *   computeRemainingHours(formulaHours, overrideRemaining, stationsComplete)
+ *   computeRemainingHours(formulaHours, overrideRemaining, stationsComplete, hrsLeft)
  *     Precedence per station: board-done → 0 (ALWAYS wins, kills config
- *     staleness) → else config remainingHours → else formula.
+ *     staleness) → else board ⏳ Hrs Left (valid number ≥ 0, verbatim,
+ *     never clamped) → else config remainingHours → else formula.
  *
- *   isReadyToShip(formulaHours, stationsComplete)
- *     True when EVERY station with formula hours > 0 is marked done.
- *     Drives the derived "Ready to Ship" status (planner keeps the job
- *     active so P&S/Delivery still plan — the Liz Stapp Complete-cliff fix).
+ *   isReadyToShip(formulaHours, stationsComplete, hrsLeft)
+ *     True when EVERY required station is marked done. Required = formula
+ *     hours > 0 OR board ⏳ Hrs Left > 0 (board-added work can't be
+ *     skipped). Drives the derived "Ready to Ship" status (planner keeps
+ *     the job active so P&S/Delivery still plan — the Liz Stapp
+ *     Complete-cliff fix).
  */
 
 const {
@@ -113,6 +116,21 @@ const FORMULA = { eng: 8.6, panel: 19.5, bench: 2.3, prefin: 0, postfin: 13.5 };
     check('NaN ignored → formula', h2.panel === 19.5, JSON.stringify(h2));
     const h3 = computeRemainingHours(FORMULA, null, []);
     check('missing 4th arg ≡ legacy behavior', h3.panel === 19.5 && h3.eng === 8.6, JSON.stringify(h3));
+  }
+
+  console.log('\nTest 9: isReadyToShip — ⏳ required-set extension');
+  {
+    const F = { eng: 4, panel: 8, bench: 0, prefin: 0, postfin: 5 };
+    check('legacy 2-arg: all formula>0 ticked → true',
+      isReadyToShip(F, ['Eng', 'Panel', 'PostFin']) === true, '');
+    check('board-added work blocks RTS (bench formula 0, ⏳5, unticked)',
+      isReadyToShip(F, ['Eng', 'Panel', 'PostFin'], { bench: 5 }) === false, '');
+    check('ticking the board-added station restores RTS (tick wins per spec)',
+      isReadyToShip(F, ['Eng', 'Panel', 'PostFin', 'Bench'], { bench: 5 }) === true, '');
+    check('⏳0 does not add a required station',
+      isReadyToShip(F, ['Eng', 'Panel', 'PostFin'], { bench: 0 }) === true, '');
+    check('all-zero formulas + empty hrsLeft → still false',
+      isReadyToShip({ eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 }, ['Eng'], {}) === false, '');
   }
 
   console.log();

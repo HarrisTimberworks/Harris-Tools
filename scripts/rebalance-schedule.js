@@ -128,9 +128,14 @@ function isValidHrsLeft(v) {
 // Complete-cliff fix — flipping straight to Complete dropped jobs while
 // delivery work remained). All-zero formulas → false (nothing to complete
 // is not the same as ready).
-function isReadyToShip(formulaHours, stationsComplete) {
+// 2026-06-12: a station with board ⏳ Hrs Left > 0 also counts as required
+// even at formula 0 — board-added work can't be skipped by the RTS flip.
+function isReadyToShip(formulaHours, stationsComplete, hrsLeft) {
   const done = new Set((stationsComplete || []).map(l => STATION_LABEL_TO_KEY[l]).filter(Boolean));
-  const required = STATION_HOUR_KEYS.filter(k => Number((formulaHours || {})[k] || 0) > 0);
+  const hl = hrsLeft || {};
+  const required = STATION_HOUR_KEYS.filter(k =>
+    Number((formulaHours || {})[k] || 0) > 0
+    || (isValidHrsLeft(hl[k]) && hl[k] > 0));
   if (required.length === 0) return false;
   return required.every(k => done.has(k));
 }
