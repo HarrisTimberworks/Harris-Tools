@@ -52,5 +52,36 @@ try { computeQuoteHours('Res FF', 5, 2); } catch (e) { threw = true; }
 console.log('Test 7: shorthand job type rejected (the routing-key bug class)');
 check('throws on unknown job type', threw);
 
+console.log('Test 8: drift guard — module factors appear in the live-board formula fixture');
+const fs = require('fs');
+const path = require('path');
+const fixturePath = path.join(__dirname, 'fixtures', 'plb-formulas.json');
+if (!fs.existsSync(fixturePath)) {
+  check('fixture exists (recapture: see Task 3 Step 1 of docs/superpowers/plans/2026-06-12-lead-time-calculator-v2.md)',
+    false, `missing ${fixturePath}`);
+} else {
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+  const byId = {};
+  for (const c of fixture.columns) byId[c.id] = c.settings_str || '';
+  // station → { columnId, factors-that-must-appear-in-the-formula-text }
+  const expectations = {
+    eng:     { col: 'formula_mm2dpf4n', nums: ['0.6', '0.4'] },
+    panel:   { col: 'formula_mm2dxy2k', nums: ['0.55'] },
+    bench:   { col: 'formula_mm2d25dk', nums: ['0.3', '0.15'] },
+    prefin:  { col: 'formula_mm2df4w1', nums: ['1.1'] },
+    postfin: { col: 'formula_mm2d5fmw', nums: ['0.45', '0.65'] },
+  };
+  for (const [station, exp] of Object.entries(expectations)) {
+    const formula = byId[exp.col] || '';
+    for (const n of exp.nums) {
+      check(`${station} formula contains ${n}`, formula.includes(n),
+        `live formula drifted? recapture fixture + recalibrate STATION_FACTORS. settings_str: ${formula.slice(0, 200)}`);
+    }
+  }
+  // the stale-doc bug class: assert panel FF is NOT the old 0.38
+  check('panel formula does NOT contain stale 0.38', !byId['formula_mm2dxy2k'].includes('0.38'),
+    'live board reverted to 0.38?! — recalibrate');
+}
+
 console.log(failures.length ? `\n❌ ${failures.length}/${checks} FAILED` : `\n✅ all ${checks} checks passed`);
 process.exit(failures.length ? 1 : 0);

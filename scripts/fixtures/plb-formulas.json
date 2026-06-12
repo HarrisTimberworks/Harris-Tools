@@ -1,0 +1,31 @@
+{
+  "capturedAt": "2026-06-12T22:18:44.096Z",
+  "boardId": 18407601557,
+  "columns": [
+    {
+      "id": "formula_mm2dpf4n",
+      "title": "Eng Hrs",
+      "settings_str": "{\"formula\":\"ROUND(({numeric_mm2dxcak} * 0.6 + {numeric_mm2dp21z} * 0.4) * {numeric_mm26mc7v} + ({numeric_mm2fynj1} * 0.005) + {numeric_mm2dv9g7}, 1)\",\"hide_footer\":true}"
+    },
+    {
+      "id": "formula_mm2dxy2k",
+      "title": "Panel Processing Hrs",
+      "settings_str": "{\"formula\":\"ROUND(({numeric_mm2dxcak} * 0.55 + {numeric_mm2dp21z} * 0.55) * {numeric_mm26mc7v} + ({numeric_mm28ab0p} * 0.0167) + IF({numeric_mm26pq37} > 0, {numeric_mm26pq37}, {numeric_mm26vgv8} * 0.1) + {numeric_mm2dgnx} + ({numeric_mm2ywks0} * 0.05), 1)\",\"hide_footer\":true}"
+    },
+    {
+      "id": "formula_mm2d25dk",
+      "title": "Benchwork Hrs",
+      "settings_str": "{\"formula\":\"ROUND(({numeric_mm2dxcak} * 0.3 + {numeric_mm2dp21z} * 0.15) * {numeric_mm26mc7v} * {numeric_mm2f46zw} + ({numeric_mm2fynj1} * 0.05) + {numeric_mm2d6da3} + ({numeric_mm2ywks0} * 0.167) + ({numeric_mm2y9z5n} * 0.25), 1)\",\"hide_footer\":true}"
+    },
+    {
+      "id": "formula_mm2d5fmw",
+      "title": "Post Fin Cab Assembly Hrs",
+      "settings_str": "{\"formula\":\"ROUND(({numeric_mm2dxcak} * 0.45 + {numeric_mm2dp21z} * 0.65) * {numeric_mm26snxn} * {numeric_mm26mc7v} + {numeric_mm2ds37c}, 1)\",\"hide_footer\":true}"
+    },
+    {
+      "id": "formula_mm2df4w1",
+      "title": "Pre Fin Cab Assembly Hrs",
+      "settings_str": "{\"formula\":\"ROUND(({numeric_mm2dxcak} * 1.10 * {numeric_mm26snxn} * {numeric_mm26mc7v}) + ({numeric_mm28ab0p} * 0.167) + {numeric_mm2dakxm}, 1)\",\"hide_footer\":true}"
+    }
+  ]
+}
