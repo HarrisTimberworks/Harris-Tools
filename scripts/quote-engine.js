@@ -163,4 +163,123 @@ function assessCandidate(baseline, candidate, syntheticJob) {
   return { feasible: reasons.length === 0, reasons };
 }
 
-module.exports = { loadQuotePolicy, lintQuotePolicy, POLICY_PATH, buildSyntheticJob, withSyntheticParents, quoteRunPlan, assessCandidate };
+// ---------------------------------------------------------------------------
+// Walk + modes + policy floor (spec §3, §4.1 steps 3-6, §4.4 outcome table)
+// ---------------------------------------------------------------------------
+const WALK_CAP_WEEKS = 26;
+
+function mondayOnOrAfter(dateISO) {
+  const monday = toISO(getMondayOfWeek(parseISO(dateISO)));
+  return monday === dateISO ? dateISO : toISO(addDays(parseISO(monday), 7));
+}
+
+function validateQuoteInput(raw, policy) {
+  const boxes = Number(raw.boxes);
+  if (!Number.isFinite(boxes) || boxes < 1) {
+    return { ok: false, reason: `Boxes must be a number ≥ 1 (got '${raw.boxes ?? ''}')` };
+  }
+  if (!JOB_TYPES[raw.jobType]) {
+    return { ok: false, reason: `Job Type '${raw.jobType ?? ''}' not recognized — valid: ${Object.keys(JOB_TYPES).join(' | ')}` };
+  }
+  const complexity = (raw.complexity === '' || raw.complexity === null || raw.complexity === undefined) ? 2 : raw.complexity;
+  if (normalizeComplexity(complexity) === null) {
+    return { ok: false, reason: `Complexity '${raw.complexity}' must round to an integer 1-5` };
+  }
+  if (raw.targetDate) {
+    const walkStart = mondayOnOrAfter(toISO(addDays(new Date(), policy.preProductionWeeks * 7)));
+    const targetWeek = toISO(getMondayOfWeek(parseISO(raw.targetDate)));
+    if (targetWeek < walkStart) {
+      return { ok: false, reason: `Target ${raw.targetDate} is in the past or inside the ${policy.preProductionWeeks}-week pre-production window (earliest quotable week: ${walkStart})` };
+    }
+  }
+  return { ok: true, input: { ...raw, boxes: Math.round(boxes), complexity } };
+}
+
+// One quote, end to end. Caller supplies boards (fresh loadAll() in
+// production; fixtures in tests). Returns the result object consumed by the
+// trigger writeback and the lead-times writer — NEVER mutates anything.
+async function runQuote(rawInput, { boards, policy, now = () => new Date(), runPlanFn } = {}) {
+  const v = validateQuoteInput(rawInput, policy);
+  if (!v.ok) return { ok: false, reason: v.reason };
+  const input = v.input;
+  const opts = runPlanFn ? { runPlanFn, now } : { now };
+
+  const baseline = await quoteRunPlan(boards, null, opts);
+  const walkStart = mondayOnOrAfter(toISO(addDays(now(), policy.preProductionWeeks * 7)));
+  const floorWeek = mondayOnOrAfter(toISO(addDays(now(), policy.minLeadWeeks[input.jobType] * 7)));
+
+  const tryWeek = async (week) => {
+    const job = buildSyntheticJob(input, policy, week);
+    const report = await quoteRunPlan(boards, job, opts);
+    return { job, ...assessCandidate(baseline, report, job) };
+  };
+
+  // Earliest-feasible walk (linear, capped — feasibility is not assumed
+  // monotone, first clean fit wins; spec §4.1 step 3). Also runs in target
+  // mode (deliberate cheap extension, spec §4.1 step 4) so capacityWeek means
+  // the same thing in both modes.
+  let capacityWeek = null;
+  let lastFail = null;
+  for (let i = 0; i < WALK_CAP_WEEKS; i++) {
+    const week = toISO(addDays(parseISO(walkStart), i * 7));
+    const t = await tryWeek(week);
+    if (t.feasible) { capacityWeek = week; break; }
+    lastFail = t;
+  }
+  if (!capacityWeek) {
+    return { ok: false, reason: `does not fit within ${WALK_CAP_WEEKS} weeks — last blocker: ${lastFail?.reasons?.[0] || 'unknown'}` };
+  }
+
+  const common = {
+    ok: true,
+    inputs: { jobType: input.jobType, boxes: input.boxes, complexity: input.complexity,
+              complexityUsed: normalizeComplexity(input.complexity), targetDate: input.targetDate || null },
+    hours: buildSyntheticJob(input, policy, capacityWeek).hours,
+    capacityWeek, floorWeek,
+    dataFreshness: now().toISOString(),
+    policy: { preProductionWeeks: policy.preProductionWeeks, minLeadWeeks: policy.minLeadWeeks[input.jobType] },
+  };
+
+  if (!input.targetDate) {
+    return { ...common, mode: 'earliest', verdict: 'EARLIEST',
+      quotedWeek: capacityWeek > floorWeek ? capacityWeek : floorWeek, bottleneck: null };
+  }
+
+  const targetWeek = toISO(getMondayOfWeek(parseISO(input.targetDate)));
+  const t = await tryWeek(targetWeek);
+  if (t.feasible) {
+    if (targetWeek >= floorWeek) {
+      return { ...common, mode: 'target', verdict: 'FITS', quotedWeek: targetWeek, targetWeek, bottleneck: null };
+    }
+    return { ...common, mode: 'target', verdict: 'FITS_BELOW_FLOOR',
+      quotedWeek: targetWeek > floorWeek ? targetWeek : floorWeek, targetWeek, bottleneck: null };
+  }
+  return { ...common, mode: 'target', verdict: 'DOES_NOT_FIT',
+    quotedWeek: capacityWeek > floorWeek ? capacityWeek : floorWeek, targetWeek,
+    bottleneck: t.reasons[0] || 'unknown constraint' };
+}
+
+function buildQuoteUpdate(res) {
+  const lines = [];
+  if (res.mode === 'earliest') {
+    lines.push(`**Quote: deliver w/o ${res.quotedWeek}**`);
+  } else if (res.verdict === 'FITS') {
+    lines.push(`**${res.targetWeek} — FITS** ✅`);
+  } else if (res.verdict === 'FITS_BELOW_FLOOR') {
+    lines.push(`**${res.targetWeek} — fits capacity, but below the policy floor (${res.policy.minLeadWeeks} wks)** — quote w/o ${res.quotedWeek} unless deliberately overriding.`);
+  } else {
+    lines.push(`**${res.targetWeek} — DOES NOT FIT** ❌`);
+    lines.push(`Blocker: ${res.bottleneck}`);
+    lines.push(`Earliest that fits: w/o ${res.capacityWeek}`);
+  }
+  lines.push('');
+  lines.push(`Capacity says earliest: **w/o ${res.capacityWeek}** · policy floor: **w/o ${res.floorWeek}** (${res.policy.minLeadWeeks} wks min) → quoted: **w/o ${res.quotedWeek}**`);
+  lines.push(`Inputs: ${res.inputs.jobType}, ${res.inputs.boxes} boxes, complexity ${res.inputs.complexityUsed}${res.inputs.complexity !== res.inputs.complexityUsed ? ` (rounded from ${res.inputs.complexity})` : ''}. Defaults: finishing days, no inset/P-Lam/miter-fold/countertop/backsplash.`);
+  lines.push(`Station hours: Eng ${res.hours.eng} · Panel ${res.hours.panel} · Bench ${res.hours.bench} · PreFin ${res.hours.prefin} · PostFin ${res.hours.postfin}. Pre-production ${res.policy.preProductionWeeks} wks included.`);
+  lines.push(`Board data as of ${res.dataFreshness}.`);
+  lines.push('');
+  lines.push('_Confirm with PM before communicating to clients._');
+  return lines.join('\n');
+}
+
+module.exports = { loadQuotePolicy, lintQuotePolicy, POLICY_PATH, buildSyntheticJob, withSyntheticParents, quoteRunPlan, assessCandidate, mondayOnOrAfter, validateQuoteInput, runQuote, buildQuoteUpdate, WALK_CAP_WEEKS };

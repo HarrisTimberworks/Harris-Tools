@@ -144,6 +144,77 @@ console.log('Test 6: quoteRunPlan — synthetic job actually PLACES (the silent-
   check('unrelated warnings ignored',
     assessCandidate(baseRep, { ...goodRep, warnings: ['Job SciTech has no delivery date — skipping'] }, fakeJob).feasible === true);
 
-  console.log(failures.length ? `\n❌ ${failures.length}/${checks} FAILED` : `\n✅ all ${checks} checks passed`);
-  process.exit(failures.length ? 1 : 0);
+  console.log('Test 14: date helpers — Monday snapping (spec §3/§4.1)');
+  const { mondayOnOrAfter, runQuote, validateQuoteInput, buildQuoteUpdate } = require('./quote-engine.js');
+  check('Monday maps to itself', mondayOnOrAfter('2026-06-15') === '2026-06-15');     // a Monday
+  check('Tuesday maps to next Monday', mondayOnOrAfter('2026-06-16') === '2026-06-22');
+  check('Sunday maps to next Monday', mondayOnOrAfter('2026-06-21') === '2026-06-22');
+
+  console.log('Test 15: validateQuoteInput — named reasons (spec §4.4)');
+  const pol = loadQuotePolicy();
+  check('missing boxes named', validateQuoteInput({ jobType: 'Commercial', boxes: 0, complexity: 2 }, pol).reason.includes('Boxes'));
+  check('bad type named + lists valid', validateQuoteInput({ jobType: 'Res FF', boxes: 5, complexity: 2 }, pol).reason.includes('Res - Face Frame'));
+  check('complexity 7 named', validateQuoteInput({ jobType: 'Commercial', boxes: 5, complexity: 7 }, pol).reason.includes('omplexity'));
+  check('target inside pre-production named',
+    validateQuoteInput({ jobType: 'Commercial', boxes: 5, complexity: 2, targetDate: mondayWeeksFromNow(1) }, pol).reason.includes('pre-production'));
+  check('empty complexity defaults to 2', validateQuoteInput({ jobType: 'Commercial', boxes: 5, complexity: '' }, pol).ok === true);
+
+  console.log('Test 16: earliest mode on an empty shop — capacity = structural chain, floor wins');
+  (async () => {
+    const boards16 = emptyBoards(20);
+    const res = await runQuote(
+      { rowId: '1', name: 'Empty shop', jobType: 'Res - Face Frame', boxes: 25, complexity: 2 },
+      { boards: boards16, policy: pol });
+    check('mode earliest', res.mode === 'earliest');
+    check('capacityWeek is a Monday ISO', /^\d{4}-\d{2}-\d{2}$/.test(res.capacityWeek), String(res.capacityWeek));
+    check('capacityWeek ≥ walk start (pre-production)', res.capacityWeek >= mondayWeeksFromNow(2), res.capacityWeek);
+    check('floorWeek ≈ 12 weeks out', res.floorWeek >= mondayWeeksFromNow(12) && res.floorWeek <= mondayWeeksFromNow(13), res.floorWeek);
+    check('quotedWeek = max(capacity, floor) = floor on empty shop', res.quotedWeek === res.floorWeek,
+      `quoted ${res.quotedWeek} capacity ${res.capacityWeek} floor ${res.floorWeek}`);
+    check('verdict EARLIEST', res.verdict === 'EARLIEST', res.verdict);
+
+    console.log('Test 17: capacity crunch pushes capacityWeek past the crunch');
+    // Crunch ALL crews for the first 8 weeks (not just the Engineering primary —
+    // SECONDARY routing could spill a single-crew crunch to a fallback crew and
+    // silently keep early weeks feasible). 1h base < every station's hours.
+    const crunch = emptyBoards(20);
+    for (const p of crunch.crewParents) {
+      if (p.week < mondayWeeksFromNow(8)) p.base = 1;
+    }
+    const res2 = await runQuote(
+      { rowId: '2', name: 'Crunched', jobType: 'Res - Face Frame', boxes: 25, complexity: 2 },
+      { boards: crunch, policy: pol });
+    check('capacityWeek pushed past the crunch', res2.capacityWeek > res.capacityWeek,
+      `crunched ${res2.capacityWeek} vs empty ${res.capacityWeek}`);
+
+    console.log('Test 18: target mode — all three outcomes (spec §4.4 table)');
+    const fits = await runQuote(
+      { rowId: '3', name: 'T1', jobType: 'Res - Face Frame', boxes: 25, complexity: 2, targetDate: mondayWeeksFromNow(14) },
+      { boards: emptyBoards(20), policy: pol });
+    check('fits ≥ floor → FITS, quoted = target week', fits.verdict === 'FITS' && fits.quotedWeek === mondayWeeksFromNow(14),
+      `${fits.verdict} ${fits.quotedWeek}`);
+    const below = await runQuote(
+      { rowId: '4', name: 'T2', jobType: 'Res - Face Frame', boxes: 25, complexity: 2, targetDate: mondayWeeksFromNow(8) },
+      { boards: emptyBoards(20), policy: pol });
+    check('fits below floor → FITS_BELOW_FLOOR, quoted = max(target, floor)',
+      below.verdict === 'FITS_BELOW_FLOOR' && below.quotedWeek === below.floorWeek, `${below.verdict} ${below.quotedWeek}`);
+    const noFit = await runQuote(
+      { rowId: '5', name: 'T3', jobType: 'Res - Face Frame', boxes: 25, complexity: 2, targetDate: mondayWeeksFromNow(3) },
+      { boards: (() => { const b = emptyBoards(20); for (const p of b.crewParents) { if (p.week < mondayWeeksFromNow(8)) p.base = 1; } return b; })(), policy: pol });
+    check('does not fit → DOES_NOT_FIT with bottleneck', noFit.verdict === 'DOES_NOT_FIT' && !!noFit.bottleneck,
+      `${noFit.verdict} ${noFit.bottleneck}`);
+    check('doesn\'t-fit still reports earliest-that-fits in capacityWeek', !!noFit.capacityWeek);
+
+    console.log('Test 19: update body carries both numbers + disclaimer + freshness');
+    const body = buildQuoteUpdate(res);
+    check('headline quoted week', body.includes(res.quotedWeek));
+    check('capacity week shown', body.includes(res.capacityWeek));
+    check('floor explanation', body.includes('floor'));
+    check('PM disclaimer', body.includes('Confirm with PM'));
+    check('freshness timestamp', body.includes(res.dataFreshness.slice(0, 10)));
+    check('inputs echoed', body.includes('25') && body.includes('Res - Face Frame'));
+
+    console.log(failures.length ? `\n❌ ${failures.length}/${checks} FAILED` : `\n✅ all ${checks} checks passed`);
+    process.exit(failures.length ? 1 : 0);
+  })();
 })();
