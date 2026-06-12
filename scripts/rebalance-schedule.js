@@ -1282,17 +1282,45 @@ function weeksCountForHours(hours) {
   return Math.ceil(hours / 40);
 }
 
+// Clamp one auto-computed window forward to effectiveWeek. customWindow
+// stations never pass through here (operator intent wins; the config lint
+// flags stale ones instead). Entirely-past windows collapse to one week at
+// effectiveWeek — late work's only honest schedule is "now".
+function clampStationWindow(station, win, effectiveWeek, clamps) {
+  if (!win || !effectiveWeek || win.start >= effectiveWeek) return win;
+  const entirelyPast = win.end < effectiveWeek;
+  const clamped = {
+    start: effectiveWeek,
+    end: entirelyPast ? toISO(addDays(parseISO(effectiveWeek), 4)) : win.end,
+  };
+  clamps.push({
+    station,
+    computedStart: win.start, computedEnd: win.end,
+    clampedStart: clamped.start, clampedEnd: clamped.end,
+    entirelyPast,
+  });
+  return clamped;
+}
+
 /**
  * Given a delivery date and job hours, compute ideal station windows.
  * Returns object with windowStart/windowEnd for each station.
+ * opts.effectiveWeek: if provided, auto-computed windows that start before it
+ * are clamped forward (entirely-past windows collapse to one week). customWindow
+ * stations are never clamped. windows.clamps[] is populated only when opts is
+ * passed. No finishing-cycle assert is thrown for clamped jobs.
  */
-function computeWindows(job) {
+function computeWindows(job, opts = {}) {
   const d = job.delivery;
   if (!d) return null;
 
+  const effectiveWeek = opts.effectiveWeek || null;
+  const clamps = [];
+
   const deliveryWeek = toISO(getMondayOfWeek(parseISO(d)));
+  let packShipRaw = { start: deliveryWeek, end: toISO(addDays(parseISO(deliveryWeek), 4)) };
   const windows = {
-    packShip: { start: deliveryWeek, end: toISO(addDays(parseISO(deliveryWeek), 4)) },
+    packShip: clampStationWindow('packShip', packShipRaw, effectiveWeek, clamps),
   };
 
   // PATCH C: For each station, apply customWindow override if provided; else compute
@@ -1307,7 +1335,10 @@ function computeWindows(job) {
     } else {
       const postfinWeeks = weeksCountForHours(job.hours.postfin);
       const postfinStart = toISO(addDays(parseISO(postfinEndWeek), -7 * (postfinWeeks - 1)));
-      windows.postfin = { start: postfinStart, end: toISO(addDays(parseISO(postfinEndWeek), 4)) };
+      windows.postfin = clampStationWindow('postfin',
+        { start: postfinStart, end: toISO(addDays(parseISO(postfinEndWeek), 4)) },
+        effectiveWeek, clamps);
+      postfinEndWeek = windows.postfin.start;
     }
   }
 
@@ -1344,7 +1375,10 @@ function computeWindows(job) {
       const prefinEndWeek = toISO(getMondayOfWeek(parseISO(prefinEndTarget)));
       const prefinWeeks = weeksCountForHours(job.hours.prefin);
       prefinStartWeek = toISO(addDays(parseISO(prefinEndWeek), -7 * (prefinWeeks - 1)));
-      windows.prefin = { start: prefinStartWeek, end: toISO(addDays(parseISO(prefinEndWeek), 4)) };
+      windows.prefin = clampStationWindow('prefin',
+        { start: prefinStartWeek, end: toISO(addDays(parseISO(prefinEndWeek), 4)) },
+        effectiveWeek, clamps);
+      prefinStartWeek = windows.prefin.start;
     }
   }
 
@@ -1365,7 +1399,10 @@ function computeWindows(job) {
       const benchEndWeek = toISO(getMondayOfWeek(parseISO(benchEndRef)));
       const benchWeeks = weeksCountForHours(job.hours.bench);
       benchStartWeek = toISO(addDays(parseISO(benchEndWeek), -7 * (benchWeeks - 1)));
-      windows.bench = { start: benchStartWeek, end: toISO(addDays(parseISO(benchEndWeek), 4)) };
+      windows.bench = clampStationWindow('bench',
+        { start: benchStartWeek, end: toISO(addDays(parseISO(benchEndWeek), 4)) },
+        effectiveWeek, clamps);
+      benchStartWeek = windows.bench.start;
     }
   }
 
@@ -1383,7 +1420,10 @@ function computeWindows(job) {
         : deliveryWeek;  // no downstream stations → Panel lands same week as delivery (Cator Ruma case)
       const panelWeeks = weeksCountForHours(job.hours.panel);
       panelStartWeek = toISO(addDays(parseISO(panelEndWeek), -7 * (panelWeeks - 1)));
-      windows.panel = { start: panelStartWeek, end: toISO(addDays(parseISO(panelEndWeek), 4)) };
+      windows.panel = clampStationWindow('panel',
+        { start: panelStartWeek, end: toISO(addDays(parseISO(panelEndWeek), 4)) },
+        effectiveWeek, clamps);
+      panelStartWeek = windows.panel.start;
     }
   }
 
@@ -1398,11 +1438,16 @@ function computeWindows(job) {
         : deliveryWeek;
       const engWeeks = weeksCountForHours(job.hours.eng);
       const engStartWeek = toISO(addDays(parseISO(engEndWeek), -7 * (engWeeks - 1)));
-      windows.eng = { start: engStartWeek, end: toISO(addDays(parseISO(engEndWeek), 4)) };
+      windows.eng = clampStationWindow('eng',
+        { start: engStartWeek, end: toISO(addDays(parseISO(engEndWeek), 4)) },
+        effectiveWeek, clamps);
     }
   }
 
-  assertFinishingCycleValid(job, windows);
+  if (clamps.length === 0) {
+    assertFinishingCycleValid(job, windows);  // unchanged defense for unclamped jobs
+  }
+  if (effectiveWeek) windows.clamps = clamps;  // key absent on legacy calls
   return windows;
 }
 
@@ -2410,6 +2455,7 @@ module.exports = {
   translateOverrideRows,
   mergeForceAssignments,
   mergeCrewExclusions,
+  clampStationWindow,
   computeWindows,
   parseISO,
   toISO,
