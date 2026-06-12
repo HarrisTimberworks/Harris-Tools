@@ -150,7 +150,7 @@ function shopProgressWarnings(jobs) {
       const label = STATION_KEY_TO_LABEL[k];
       const f = Number((j.formulaHours || {})[k] || 0);
       if (!isValidHrsLeft(v)) {
-        warnings.push(`${j.name} ${label}: invalid ⏳ Hrs Left (${v}) ignored — using config/formula`);
+        warnings.push(`${j.name} ${label}: invalid ⏳ Hrs Left (${v}) ignored — falls back to tick/config/formula precedence`);
       } else if (done.has(k) && v > 0) {
         warnings.push(`${j.name} ${label}: ticked complete but ⏳ Hrs Left is ${v} — tick wins (0 hrs); clear the cell or untick`);
       } else if (!done.has(k) && v === 0) {

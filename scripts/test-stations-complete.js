@@ -174,6 +174,10 @@ const FORMULA = { eng: 8.6, panel: 19.5, bench: 2.3, prefin: 0, postfin: 13.5 };
         stationsComplete: [], hrsLeft: { ...empty, panel: 0 } },
       { name: 'QuietJob', status: 'Scheduled', formulaHours: F,
         stationsComplete: [], hrsLeft: { ...empty, panel: 5 } },
+      { name: 'PriorityContraOverOverrun', status: 'Scheduled', formulaHours: F,
+        stationsComplete: ['Bench'], hrsLeft: { ...empty, bench: 12 } },
+      { name: 'PriorityInvalidOverContra', status: 'Scheduled', formulaHours: F,
+        stationsComplete: ['Bench'], hrsLeft: { ...empty, bench: -2 } },
     ];
     const w = shopProgressWarnings(jobs);
     check('tick nudge fired', w.some(x => /NudgeJob Panel: .*0 but station not ticked/.test(x)), JSON.stringify(w));
@@ -182,7 +186,13 @@ const FORMULA = { eng: 8.6, panel: 19.5, bench: 2.3, prefin: 0, postfin: 13.5 };
     check('invalid value fired', w.some(x => /InvalidJob Eng: invalid/.test(x)), JSON.stringify(w));
     check('Complete jobs skipped', !w.some(x => /CompleteJob/.test(x)), JSON.stringify(w));
     check('healthy partial entry silent (5 < formula 8)', !w.some(x => /QuietJob/.test(x)), JSON.stringify(w));
-    check('exactly 4 warnings', w.length === 4, JSON.stringify(w));
+    check('priority: contradiction beats overrun (ticked + 12 > formula 10)',
+      w.some(x => /PriorityContraOverOverrun Bench: ticked complete but/.test(x))
+      && !w.some(x => /PriorityContraOverOverrun Bench: .*exceeds formula/.test(x)), JSON.stringify(w));
+    check('priority: invalid beats contradiction (ticked + -2)',
+      w.some(x => /PriorityInvalidOverContra Bench: invalid/.test(x))
+      && !w.some(x => /PriorityInvalidOverContra Bench: ticked complete/.test(x)), JSON.stringify(w));
+    check('exactly 6 warnings', w.length === 6, JSON.stringify(w));
     check('null/empty jobs safe', Array.isArray(shopProgressWarnings(null)) && shopProgressWarnings([]).length === 0, '');
   }
 
