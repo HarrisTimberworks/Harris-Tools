@@ -99,16 +99,27 @@ const STATION_LABEL_TO_KEY = Object.freeze({
 const STATION_HOUR_KEYS = Object.freeze(['eng', 'panel', 'bench', 'prefin', 'postfin']);
 
 // Per-station precedence: board-done → 0 (ALWAYS wins — the board is live
-// shop-floor truth and kills config staleness) → else config remainingHours
-// → else formula. Unknown labels are ignored.
-function computeRemainingHours(formulaHours, overrideRemaining, stationsComplete) {
+// shop-floor truth and kills config staleness) → else board ⏳ Hrs Left (a
+// non-empty cell is the shop's current remaining estimate, verbatim — may
+// exceed the formula on overruns, never clamped; spec 2026-06-12) → else
+// config remainingHours → else formula. Unknown labels are ignored.
+function computeRemainingHours(formulaHours, overrideRemaining, stationsComplete, hrsLeft) {
   const done = new Set((stationsComplete || []).map(l => STATION_LABEL_TO_KEY[l]).filter(Boolean));
   const base = overrideRemaining && overrideRemaining !== null ? overrideRemaining : (formulaHours || {});
+  const hl = hrsLeft || {};
   const out = {};
   for (const k of STATION_HOUR_KEYS) {
-    out[k] = done.has(k) ? 0 : Number(base[k] || 0);
+    if (done.has(k)) { out[k] = 0; continue; }
+    out[k] = isValidHrsLeft(hl[k]) ? hl[k] : Number(base[k] || 0);
   }
   return out;
+}
+
+// A usable ⏳ Hrs Left value: finite number ≥ 0. Anything else (null for an
+// empty cell, NaN, negatives) falls through to config/formula;
+// shopProgressWarnings surfaces the garbage.
+function isValidHrsLeft(v) {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
 }
 
 // True when EVERY station with formula hours > 0 is marked done. Drives the
@@ -2294,6 +2305,7 @@ module.exports = {
   SECONDARY,
   // Stations-Complete tracking (2026-06-11).
   computeRemainingHours,
+  isValidHrsLeft,
   isReadyToShip,
   STATION_LABEL_TO_KEY,
   // Audit fixes (2026-06-11).

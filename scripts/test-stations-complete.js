@@ -90,6 +90,31 @@ const FORMULA = { eng: 8.6, panel: 19.5, bench: 2.3, prefin: 0, postfin: 13.5 };
     check('missing args safe', isReadyToShip(undefined, undefined) === false, '');
   }
 
+  console.log('\nTest 7: ⏳ Hrs Left tier — between tick and config');
+  {
+    const HL = { eng: 7, panel: 5, bench: 0, prefin: null, postfin: 12 };
+    const CFG = { eng: 4, panel: 8, bench: 2.3, prefin: 6, postfin: 5 };
+    const h = computeRemainingHours(FORMULA, CFG, ['Eng'], HL);
+    check('tick beats Hrs Left (Eng 0 despite ⏳7)', h.eng === 0, JSON.stringify(h));
+    check('Hrs Left beats config (Panel 5 not 8)', h.panel === 5, JSON.stringify(h));
+    check('explicit 0 honored (Bench 0 not 2.3)', h.bench === 0, JSON.stringify(h));
+    check('empty cell falls through to config (PreFin 6)', h.prefin === 6, JSON.stringify(h));
+    check('Hrs Left beats config (PostFin 12 not 5)', h.postfin === 12, JSON.stringify(h));
+  }
+
+  console.log('\nTest 8: ⏳ Hrs Left — formula fallback, overrun unclamped, invalid ignored, back-compat');
+  {
+    const h0 = computeRemainingHours(FORMULA, null, [], { eng: null, panel: null, bench: 1, prefin: null, postfin: null });
+    check('no config: Hrs Left beats formula (Bench 1 not 2.3)', h0.bench === 1 && h0.panel === 19.5, JSON.stringify(h0));
+    const h1 = computeRemainingHours(FORMULA, null, [], { eng: null, panel: 99, bench: null, prefin: null, postfin: null });
+    check('overrun passes verbatim (99 > formula 19.5, never clamped)', h1.panel === 99, JSON.stringify(h1));
+    const h2 = computeRemainingHours(FORMULA, null, [], { eng: -3, panel: NaN, bench: null, prefin: null, postfin: null });
+    check('negative ignored → formula', h2.eng === 8.6, JSON.stringify(h2));
+    check('NaN ignored → formula', h2.panel === 19.5, JSON.stringify(h2));
+    const h3 = computeRemainingHours(FORMULA, null, []);
+    check('missing 4th arg ≡ legacy behavior', h3.panel === 19.5 && h3.eng === 8.6, JSON.stringify(h3));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);
