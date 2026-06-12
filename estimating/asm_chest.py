@@ -20,6 +20,27 @@ MARKERS = [
 ]
 IC = "1 0.4392157 0"        # orange — visually distinct review color
 
+# ---------------------------------------------------------------------------
+# Real appearance resource cloned from a live Count tool in HTW-R 09 LED.btx.
+# RES_ID_HEX  — zlib-compressed ID string "XVBBLLRKXOKRTMUX"
+# RES_DATA_HEX — zlib-compressed XObject appearance stream (228 bytes decoded)
+# AP_FRAGMENT  — /AP entry for the annotation dict referencing the same ID
+# All six ASM markers share this one resource; sharing one valid resource is
+# far better than six fake ones that Revu may reject.
+# ---------------------------------------------------------------------------
+RES_ID_HEX = (
+    "789c8b087372f2f109f28ef0f70e0af10d8d000029b904fa"
+)
+RES_DATA_HEX = (
+    "789c554ecb0e823010bcf72bf60bfa124849080762f0a291800713c201b08246"
+    "a82925e2dfdbc2c93d4c7666323b1b45e428c7cef4200272f9be25b99e9ba76c"
+    "0d29e6c6389e2a3dace05c602449d45252a0c03dec0be105c039f62b92cb49cd"
+    "ba95933d9969d516d29424dba7551c93536df4632919b8dc8a564593d1b21e90"
+    "65d8a72c0ca8b05e7eb0f607fe45dd01e398871edf01133080ada676985be005"
+    "9c62babeb2d11eee80901c6f5bc30fa8823d68"
+)
+AP_FRAGMENT = "/AP<</N/BBObjPtr_XVBBLLRKXOKRTMUX>>"
+
 
 def _escape(s):
     return s.replace("(", "\\(").replace(")", "\\)")
@@ -28,6 +49,7 @@ def _escape(s):
 def _marker_raw(subject, template):
     return (
         "<</Version 1"
+        f"{AP_FRAGMENT}"
         "/DS(font: Helvetica 12pt; text-align:center; "
         "line-height:13.8pt; color:#FF7000)"
         "/CountStyle/Checkmark/MeasurementTypes 128/NumCounts 1"
@@ -52,8 +74,8 @@ def build(out_dir):
     for subject, template in MARKERS:
         item = ET.SubElement(root, "ToolChestItem", {"Version": "1"})
         res = ET.SubElement(item, "Resources")
-        ET.SubElement(res, "ID").text = "HTWASMMARKER"
-        ET.SubElement(res, "Data").text = "00"
+        ET.SubElement(res, "ID").text = RES_ID_HEX
+        ET.SubElement(res, "Data").text = RES_DATA_HEX
         ET.SubElement(item, "Name").text = "HTWASMMARKER"
         ET.SubElement(item, "Type").text = COUNT_TYPE
         raw = _marker_raw(subject, template)

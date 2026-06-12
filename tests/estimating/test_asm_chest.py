@@ -1,3 +1,6 @@
+import zlib
+import xml.etree.ElementTree as ET
+
 from estimating import asm_chest, btx
 
 
@@ -25,3 +28,20 @@ def test_library_rows_for_markers():
     assert all(r.unit == "EA" and r.line == "R" and r.raw_cost == 0.0
                and r.status == "active" for r in rows)
     assert rows[0].subject == "ASM - Finished End (FF Flush) - EA"
+
+
+def test_resources_are_valid_zlib_hex(tmp_path):
+    p = asm_chest.build(tmp_path)
+    root = ET.parse(p).getroot()
+    for item in root.findall("ToolChestItem"):
+        rid = item.find("Resources/ID").text
+        rdata = item.find("Resources/Data").text
+        # must be decodable zlib-hex, not literal junk
+        zlib.decompress(bytes.fromhex(rid))
+        zlib.decompress(bytes.fromhex(rdata))
+
+
+def test_markers_reference_appearance_pointer(tmp_path):
+    p = asm_chest.build(tmp_path)
+    ts = btx.read_toolset(p)
+    assert all("/AP<</N/BBObjPtr_" in t.raw for t in ts.tools)
