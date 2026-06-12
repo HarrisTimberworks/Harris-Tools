@@ -122,12 +122,20 @@ function isValidHrsLeft(v) {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0;
 }
 
+// monday numbers-column text → null (empty cell = "no board info") or a
+// number. May return NaN/negative/Infinity for garbage — isValidHrsLeft
+// gates use.
+function parseHrsLeftCell(text) {
+  const t = (text ?? '').trim();
+  return t === '' ? null : parseFloat(t.replace(/,/g, ''));
+}
+
 // True when EVERY station with formula hours > 0 is marked done. Drives the
 // derived "Ready to Ship" status in run-planner.js: production is finished
 // but the job stays ACTIVE so P&S/Delivery keep planning (the Liz Stapp
 // Complete-cliff fix — flipping straight to Complete dropped jobs while
-// delivery work remained). All-zero formulas → false (nothing to complete
-// is not the same as ready).
+// delivery work remained). An empty required set → false (nothing to
+// complete is not the same as ready).
 // 2026-06-12: a station with board ⏳ Hrs Left > 0 also counts as required
 // even at formula 0 — board-added work can't be skipped by the RTS flip.
 function isReadyToShip(formulaHours, stationsComplete, hrsLeft) {
@@ -2311,6 +2319,7 @@ module.exports = {
   // Stations-Complete tracking (2026-06-11).
   computeRemainingHours,
   isValidHrsLeft,
+  parseHrsLeftCell,
   isReadyToShip,
   STATION_LABEL_TO_KEY,
   // Audit fixes (2026-06-11).

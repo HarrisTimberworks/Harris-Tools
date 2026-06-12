@@ -22,6 +22,8 @@
 const {
   computeRemainingHours,
   isReadyToShip,
+  isValidHrsLeft,
+  parseHrsLeftCell,
   STATION_LABEL_TO_KEY,
 } = require('./rebalance-schedule.js');
 
@@ -131,6 +133,27 @@ const FORMULA = { eng: 8.6, panel: 19.5, bench: 2.3, prefin: 0, postfin: 13.5 };
       isReadyToShip(F, ['Eng', 'Panel', 'PostFin'], { bench: 0 }) === true, '');
     check('all-zero formulas + empty hrsLeft → still false',
       isReadyToShip({ eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 }, ['Eng'], {}) === false, '');
+    check('⏳-only required set: all-zero formulas + ⏳5 unticked → false',
+      isReadyToShip({ eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 }, [], { bench: 5 }) === false, '');
+    check('⏳-only required set: ticking the station completes it → true',
+      isReadyToShip({ eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 }, ['Bench'], { bench: 5 }) === true, '');
+  }
+
+  console.log('\nTest 10: parseHrsLeftCell — monday numbers-column text');
+  {
+    check('empty string → null (empty cell ≠ 0)', parseHrsLeftCell('') === null, '');
+    check('undefined → null', parseHrsLeftCell(undefined) === null, '');
+    check('whitespace → null', parseHrsLeftCell('  ') === null, '');
+    check('"0" → 0 (explicit zero)', parseHrsLeftCell('0') === 0, '');
+    check('"102" → 102', parseHrsLeftCell('102') === 102, '');
+    check('"2.3" → 2.3', parseHrsLeftCell('2.3') === 2.3, '');
+    check('"1,234" → 1234 (thousands separator)', parseHrsLeftCell('1,234') === 1234, '');
+    check('"-5" → -5 (sanitized downstream by isValidHrsLeft)', parseHrsLeftCell('-5') === -5, '');
+    check('isValidHrsLeft rejects null/-5/NaN, accepts 0/2.3',
+      !isValidHrsLeft(null) && !isValidHrsLeft(-5) && !isValidHrsLeft(NaN)
+      && isValidHrsLeft(0) && isValidHrsLeft(2.3), '');
+    check('isValidHrsLeft rejects strings and Infinity (type-strict gate)',
+      !isValidHrsLeft('5') && !isValidHrsLeft(Infinity) && !isValidHrsLeft(parseHrsLeftCell('Infinity')), '');
   }
 
   console.log();
