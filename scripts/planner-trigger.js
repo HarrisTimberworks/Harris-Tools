@@ -622,6 +622,7 @@ if (require.main === module) {
         deps: {
           writeCapacityView: replaceCapacityViewBody,
           writeWeeklyBriefing,
+          writeLeadTimes: require('./write-lead-times.js').writeLeadTimes,
         },
       });
     },

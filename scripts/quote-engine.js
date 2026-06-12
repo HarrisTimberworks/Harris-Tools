@@ -282,4 +282,20 @@ function buildQuoteUpdate(res) {
   return lines.join('\n');
 }
 
-module.exports = { loadQuotePolicy, lintQuotePolicy, POLICY_PATH, buildSyntheticJob, withSyntheticParents, quoteRunPlan, assessCandidate, mondayOnOrAfter, validateQuoteInput, runQuote, buildQuoteUpdate, WALK_CAP_WEEKS };
+// Reference-basket quotes for the dealer artifact (spec §4.5). Shares ONE
+// baseline across the basket; returns ONLY what the public artifact may carry.
+async function leadTimesForBasket(boards, policy, { now = () => new Date(), runPlanFn } = {}) {
+  const results = [];
+  for (const b of policy.referenceBasket) {
+    const res = await runQuote(
+      { rowId: `basket-${results.length}`, name: b.label, jobType: b.jobType, boxes: b.boxes, complexity: b.complexity },
+      { boards, policy, now, runPlanFn });
+    if (!res.ok) throw new Error(`lead-times basket '${b.label}' failed: ${res.reason}`);
+    const weeks = Math.round((parseISO(res.quotedWeek) - getMondayOfWeek(now())) / (7 * 24 * 3600 * 1000));
+    results.push({ label: b.label, jobType: b.jobType, display: JOB_TYPES[b.jobType].display,
+      quotedWeek: res.quotedWeek, weeks });
+  }
+  return results;
+}
+
+module.exports = { loadQuotePolicy, lintQuotePolicy, POLICY_PATH, buildSyntheticJob, withSyntheticParents, quoteRunPlan, assessCandidate, mondayOnOrAfter, validateQuoteInput, runQuote, buildQuoteUpdate, leadTimesForBasket, WALK_CAP_WEEKS };

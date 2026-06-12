@@ -954,6 +954,94 @@ function makeFakeBoards() {
     check('no writer calls in execute mode', stubs.calls.length === 0, JSON.stringify(stubs.calls.map(c => c.kind)));
   }
 
+  // ===========================================================================
+  // Task 11 — lead-times writer hook (third independent writer)
+  // ===========================================================================
+
+  console.log('\nTest 18: Task 11 — deps.writeLeadTimes invoked once; outputs.leadTimes.ok === true');
+  {
+    // Verifies the lead-times hook fires in the outputs stage and that the
+    // result lands in outputs.leadTimes with ok: true. Stubs loadQuotePolicy
+    // and leadTimesForBasket via deps injection (the hook falls back to
+    // require('./quote-engine.js') only when these deps are absent) so the
+    // test stays hermetic — no API calls, no board data needed.
+    const stubs = makeOutputStubs();
+    const ltCalls = [];
+    const fakeBasket = [
+      { label: 'Typical residential FF', jobType: 'Res - Face Frame', display: 'Face frame', quotedWeek: '2026-09-07', weeks: 12 },
+    ];
+    const stubLoadQuotePolicy    = () => ({ preProductionWeeks: 2, minLeadWeeks: {}, defaultFinishingDays: 5, referenceBasket: [] });
+    const stubLeadTimesForBasket = async () => fakeBasket;
+    const stubWriteLeadTimes     = async (basket, opts) => {
+      ltCalls.push({ basket, opts });
+      return { files: ['/fake/logs/lead-times-2026-05-22.json', '/fake/logs/lead-times.json', '/fake/logs/lead-times-snippet.html'] };
+    };
+
+    const fakeFs = makeFakeFs();
+    const realLog = console.log; console.log = () => {};
+    let result;
+    try {
+      result = await runPlanner({
+        mode: 'plan',
+        deps: {
+          ...stubs.deps,
+          fs: fakeFs.fs,
+          logsDir: '/fake/logs',
+          loadQuotePolicy: stubLoadQuotePolicy,
+          leadTimesForBasket: stubLeadTimesForBasket,
+          writeLeadTimes: stubWriteLeadTimes,
+        },
+      });
+    } finally { console.log = realLog; }
+
+    check('lead-times writer invoked exactly once', ltCalls.length === 1, `calls=${ltCalls.length}`);
+    check('writer received the basket array', Array.isArray(ltCalls[0]?.basket), JSON.stringify(ltCalls[0]?.basket));
+    check('outputs.leadTimes.ok === true', result?.outputs?.leadTimes?.ok === true, JSON.stringify(result?.outputs?.leadTimes));
+    check('outputs.leadTimes is not null', result?.outputs?.leadTimes !== null, JSON.stringify(result?.outputs?.leadTimes));
+    check('other writers unaffected (capacityView ok)', result?.outputs?.capacityView?.ok === true, JSON.stringify(result?.outputs?.capacityView));
+    check('other writers unaffected (weeklyBriefing ok)', result?.outputs?.weeklyBriefing?.ok === true, JSON.stringify(result?.outputs?.weeklyBriefing));
+  }
+
+  console.log('\nTest 19: Task 11 — throwing writeLeadTimes → outputs.leadTimes.ok === false; other writers unaffected');
+  {
+    // Verifies per-writer try/catch: a writeLeadTimes throw must not abort the
+    // run, and the other two writers' results must be unchanged.
+    const stubs = makeOutputStubs();
+    const stubLoadQuotePolicy    = () => ({ preProductionWeeks: 2, minLeadWeeks: {}, defaultFinishingDays: 5, referenceBasket: [] });
+    const stubLeadTimesForBasket = async () => [];
+    const stubWriteLeadTimesThrows = async () => {
+      throw new Error('synthetic lead-times write failure');
+    };
+
+    const fakeFs = makeFakeFs();
+    const captured = [];
+    const realLog = console.log; console.log = (...a) => captured.push(a.join(' '));
+    let result, threw = false;
+    try {
+      result = await runPlanner({
+        mode: 'plan',
+        deps: {
+          ...stubs.deps,
+          fs: fakeFs.fs,
+          logsDir: '/fake/logs',
+          loadQuotePolicy: stubLoadQuotePolicy,
+          leadTimesForBasket: stubLeadTimesForBasket,
+          writeLeadTimes: stubWriteLeadTimesThrows,
+        },
+      });
+    } catch (e) {
+      threw = true;
+    } finally { console.log = realLog; }
+
+    check('runPlanner did not throw on lead-times failure', threw === false, '');
+    check('outputs.leadTimes.ok === false', result?.outputs?.leadTimes?.ok === false, JSON.stringify(result?.outputs?.leadTimes));
+    check('outputs.leadTimes.error contains the message', /synthetic/.test(result?.outputs?.leadTimes?.error || ''), JSON.stringify(result?.outputs?.leadTimes));
+    check('capacityView writer still ran (ok === true)', result?.outputs?.capacityView?.ok === true, JSON.stringify(result?.outputs?.capacityView));
+    check('weeklyBriefing writer still ran (ok === true)', result?.outputs?.weeklyBriefing?.ok === true, JSON.stringify(result?.outputs?.weeklyBriefing));
+    const blob = captured.join('\n');
+    check('failure surfaced loudly in console', /✗.*[Ll]ead-[Tt]imes.*FAILED/.test(blob), blob.slice(-400));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

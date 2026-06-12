@@ -317,9 +317,10 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
 
   const _writeCapacityView   = deps.writeCapacityView;
   const _writeWeeklyBriefing = deps.writeWeeklyBriefing;
-  const outputs = { acceptedTuples, statusDerivation, capacityView: null, weeklyBriefing: null };
+  const _writeLeadTimes      = deps.writeLeadTimes;
+  const outputs = { acceptedTuples, statusDerivation, capacityView: null, weeklyBriefing: null, leadTimes: null };
 
-  if (!_writeCapacityView && !_writeWeeklyBriefing) {
+  if (!_writeCapacityView && !_writeWeeklyBriefing && !_writeLeadTimes) {
     console.log('\n=== OUTPUTS === skipped (no writers wired — CLI entry provides them)');
   } else {
     console.log('\n=== OUTPUTS ===');
@@ -365,6 +366,24 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
     } else {
       console.log('  Weekly Briefing writer not wired — skipped.');
     }
+
+    if (_writeLeadTimes) {
+      try {
+        const _leadTimesForBasket = deps.leadTimesForBasket || require('./quote-engine.js').leadTimesForBasket;
+        const _loadQuotePolicy    = deps.loadQuotePolicy    || require('./quote-engine.js').loadQuotePolicy;
+        const policy = _loadQuotePolicy();
+        const basket = await _leadTimesForBasket(boards, policy, { now: () => generatedAt });
+        const r = await _writeLeadTimes(basket, { dryRun: _dryRun, now: () => generatedAt });
+        outputs.leadTimes = { ok: true, dryRun: !!r.dryRun, files: r.files };
+        console.log(`  ✓ Lead-times artifacts ${r.dryRun ? '(dry-run)' : 'written'}`);
+      } catch (e) {
+        outputs.leadTimes = { ok: false, error: e.message || String(e) };
+        console.log(`  ✗ Lead-times artifacts FAILED: ${e.message || e}`);
+        console.log('    Re-run standalone: `node scripts/write-lead-times.js`. Other outputs unaffected.');
+      }
+    } else {
+      console.log('  Lead-times writer not wired — skipped.');
+    }
   }
 
   return { baselinePlan, validation, finalPlan, planFile, validationFile, outputs, configLint };
@@ -390,12 +409,14 @@ if (require.main === module) {
   // hermetic. See the outputs-stage docstring in runPlanner.
   const { replaceCapacityViewBody } = require('./write-capacity-view.js');
   const { writeWeeklyBriefing } = require('./write-weekly-briefing.js');
+  const { writeLeadTimes } = require('./write-lead-times.js');
   runPlanner({
     mode,
     options: { force: args.includes('--force') },
     deps: {
       writeCapacityView: replaceCapacityViewBody,
       writeWeeklyBriefing,
+      writeLeadTimes,
     },
   }).then(result => {
     if (result && result.planError) process.exitCode = 1;
