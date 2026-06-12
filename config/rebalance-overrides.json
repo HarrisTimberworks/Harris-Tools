@@ -203,7 +203,7 @@
     },
     "11693166564": {
       "name": "MAG - BCH",
-      "note": "2026-06-11: reactivated with remaining Panel 4h + Bench 40h (Chris). Delivery 6/17 on Master PM. Stale 5/18 customWindows removed — planner recomputes from delivery.",
+      "note": "2026-06-11: reactivated with remaining Panel 4h + Bench 40h (Chris). Delivery 6/17 on Master PM. Stale 5/18 customWindows removed — planner recomputes from delivery. | 2026-06-12: bench window widened to 6/08-6/19 — bench slipped past wk 6/8, operator override moves it to 6/15 (delivery 6/17, Mon-Tue work).",
       "remainingHours": {
         "eng": 0,
         "panel": 4,
@@ -213,6 +213,10 @@
       },
       "customWindow": {
         "panel": {
+          "start": "2026-06-08",
+          "end": "2026-06-19"
+        },
+        "bench": {
           "start": "2026-06-08",
           "end": "2026-06-19"
         }
