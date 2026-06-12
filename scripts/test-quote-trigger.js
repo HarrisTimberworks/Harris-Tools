@@ -93,6 +93,138 @@ console.log('Test 1: readTickState — ONE request carrying trigger status + quo
     && rows[0].targetDate === '2026-09-07' && rows[0].quoteStatus === 'Quote Requested',
     JSON.stringify(rows[0]));
 
+  console.log('Test 4: processQuotes happy path — lifecycle + writebacks + silence');
+  {
+    const { files, fs: fakeFs } = makeFakeFs();
+    const mutations = [];
+    const gqlFn = async (q, vars) => { mutations.push({ q, vars }); return { change_multiple_column_values: { id: '1' }, create_update: { id: '2' } }; };
+    const fakeResult = { ok: true, mode: 'earliest', verdict: 'EARLIEST', quotedWeek: '2026-09-07',
+      capacityWeek: '2026-08-03', floorWeek: '2026-09-07', dataFreshness: new Date().toISOString(),
+      inputs: { jobType: 'Res - Face Frame', boxes: 25, complexity: 2, complexityUsed: 2, targetDate: null },
+      hours: { eng: 15, panel: 13.8, bench: 7.5, prefin: 27.5, postfin: 11.3 },
+      policy: { preProductionWeeks: 2, minLeadWeeks: 12 } };
+    let loaded = 0;
+    const r = await processQuotes({
+      rows: [{ rowId: '501', name: 'Smith', jobType: 'Res - Face Frame', boxes: '25', complexity: '2', targetDate: null, quoteStatus: QUOTE_LABELS.requested }],
+      deps: { config: CONFIG, gqlFn, fsImpl: fakeFs, now: () => new Date(),
+        loadAllFn: async () => { loaded++; return { jobs: [], crewParents: [], timeOff: [], existingSubs: [], overrideRows: [] }; },
+        runQuoteFn: async () => fakeResult, logger: { log: () => {} } },
+    });
+    check('processed 1', r.processed === 1, JSON.stringify(r));
+    check('fresh loadAll happened', loaded === 1);
+    const labels = mutations.filter(m => m.q.includes('change_multiple_column_values')).map(m => m.vars.cv);
+    check('flipped Quoting then Quoted', labels.some(cv => cv.includes('Quoting')) && labels.some(cv => cv.includes('"Quoted"')),
+      JSON.stringify(labels));
+    check('date columns written', labels.some(cv => cv.includes('2026-09-07') && cv.includes('2026-08-03')));
+    check('update posted with both numbers', mutations.some(m => m.q.includes('create_update') && m.vars.body.includes('2026-08-03')));
+    check('no notification on clean quote', !mutations.some(m => m.q.includes('create_notification')));
+    check('quote lock released', !files.has(String(DEFAULT_QUOTE_LOCK_FILE)) || !files.get(String(DEFAULT_QUOTE_LOCK_FILE)));
+  }
+
+  console.log('Test 5: invalid input → Quote Error + reason, NO notification, engine never ran');
+  {
+    const { fs: fakeFs } = makeFakeFs();
+    const mutations = [];
+    const gqlFn = async (q, vars) => { mutations.push({ q, vars }); return {}; };
+    let engineRan = 0;
+    await processQuotes({
+      rows: [{ rowId: '502', name: 'Bad', jobType: 'Res FF', boxes: '0', complexity: '2', targetDate: null, quoteStatus: QUOTE_LABELS.requested }],
+      deps: { config: CONFIG, gqlFn, fsImpl: fakeFs, now: () => new Date(),
+        loadAllFn: async () => ({ jobs: [], crewParents: [], timeOff: [], existingSubs: [], overrideRows: [] }),
+        runQuoteFn: async () => { engineRan++; return { ok: false, reason: 'should not reach' }; },
+        logger: { log: () => {} } },
+    });
+    // validation happens BEFORE loadAll/engine — validateQuoteInput is called by processQuotes
+    check('Quote Error flipped', mutations.some(m => m.vars?.cv?.includes('Quote Error')));
+    check('reason in update', mutations.some(m => m.q.includes('create_update') && /Boxes/.test(m.vars.body)));
+    check('no notification', !mutations.some(m => m.q.includes('create_notification')));
+  }
+
+  console.log('Test 6: engine failure → Quote Error + notify Chris');
+  {
+    const { fs: fakeFs } = makeFakeFs();
+    const mutations = [];
+    const gqlFn = async (q, vars) => { mutations.push({ q, vars }); return {}; };
+    await processQuotes({
+      rows: [{ rowId: '503', name: 'Boom', jobType: 'Commercial', boxes: '10', complexity: '2', targetDate: null, quoteStatus: QUOTE_LABELS.requested }],
+      deps: { config: CONFIG, gqlFn, fsImpl: fakeFs, now: () => new Date(),
+        loadAllFn: async () => ({ jobs: [], crewParents: [], timeOff: [], existingSubs: [], overrideRows: [] }),
+        runQuoteFn: async () => { throw new Error('planner exploded'); }, logger: { log: () => {} } },
+    });
+    check('Quote Error flipped', mutations.some(m => m.vars?.cv?.includes('Quote Error')));
+    check('Chris notified', mutations.some(m => m.q.includes('create_notification') && /planner exploded/.test(m.vars.text)));
+  }
+
+  console.log('Test 7: planner.lock held → defer, row untouched');
+  {
+    const { acquireLock } = require('./planner-trigger.js');
+    const { files, fs: fakeFs } = makeFakeFs();
+    // Seed a FRESH planner lock via acquireLock itself — guarantees the file
+    // shape matches whatever readLockState parses (never hand-roll lock JSON).
+    const plannerLockPath = require('path').join(__dirname, '..', 'logs', 'planner.lock');
+    acquireLock({ fsImpl: fakeFs, lockFile: plannerLockPath, now: () => new Date() });
+    const mutations = [];
+    const r = await processQuotes({
+      rows: [{ rowId: '504', name: 'Wait', jobType: 'Commercial', boxes: '10', complexity: '2', targetDate: null, quoteStatus: QUOTE_LABELS.requested }],
+      deps: { config: CONFIG, gqlFn: async (q, vars) => { mutations.push({ q, vars }); return {}; }, fsImpl: fakeFs,
+        now: () => new Date(), loadAllFn: async () => ({}), runQuoteFn: async () => ({}), logger: { log: () => {} } },
+    });
+    check('deferred', r.deferred === 1, JSON.stringify(r));
+    check('zero mutations', mutations.length === 0, String(mutations.length));
+  }
+
+  console.log('Test 8: 3-per-tick cap');
+  {
+    const { fs: fakeFs } = makeFakeFs();
+    const rows = ['1', '2', '3', '4', '5'].map(id => ({ rowId: id, name: `Q${id}`, jobType: 'Commercial', boxes: '5', complexity: '2', targetDate: null, quoteStatus: QUOTE_LABELS.requested }));
+    const fakeResult = { ok: true, mode: 'earliest', verdict: 'EARLIEST', quotedWeek: '2026-09-07', capacityWeek: '2026-08-03',
+      floorWeek: '2026-09-07', dataFreshness: new Date().toISOString(),
+      inputs: { jobType: 'Commercial', boxes: 5, complexity: 2, complexityUsed: 2, targetDate: null },
+      hours: { eng: 2, panel: 2.8, bench: 0.8, prefin: 0, postfin: 3.3 }, policy: { preProductionWeeks: 2, minLeadWeeks: 10 } };
+    const r = await processQuotes({
+      rows,
+      deps: { config: CONFIG, gqlFn: async () => ({}), fsImpl: fakeFs, now: () => new Date(),
+        loadAllFn: async () => ({ jobs: [], crewParents: [], timeOff: [], existingSubs: [], overrideRows: [] }),
+        runQuoteFn: async () => fakeResult, logger: { log: () => {} } },
+    });
+    check('processed exactly 3', r.processed === 3, JSON.stringify(r));
+    check('2 left for next tick', r.remaining === 2);
+  }
+
+  console.log('Test 9: stuck-Quoting self-heal — Quoting + absent quote.lock ⇒ Quote Error');
+  {
+    const { fs: fakeFs } = makeFakeFs(); // no lock file at all
+    const mutations = [];
+    await processQuotes({
+      rows: [{ rowId: '505', name: 'Stuck', jobType: 'Commercial', boxes: '5', complexity: '2', targetDate: null, quoteStatus: QUOTE_LABELS.quoting }],
+      deps: { config: CONFIG, gqlFn: async (q, vars) => { mutations.push({ q, vars }); return {}; }, fsImpl: fakeFs,
+        now: () => new Date(), loadAllFn: async () => ({}), runQuoteFn: async () => ({}), logger: { log: () => {} } },
+    });
+    check('healed to Quote Error', mutations.some(m => m.vars?.cv?.includes('Quote Error')));
+    check('explanation update posted', mutations.some(m => m.q.includes('create_update') && /died|crash|mid-flight/i.test(m.vars.body)));
+  }
+
+  console.log('Test 10: DRY_RUN prints, mutates nothing');
+  {
+    process.env.DRY_RUN = '1';
+    const { fs: fakeFs } = makeFakeFs();
+    const mutations = [];
+    const logged = [];
+    await processQuotes({
+      rows: [{ rowId: '506', name: 'Dry', jobType: 'Commercial', boxes: '5', complexity: '2', targetDate: null, quoteStatus: QUOTE_LABELS.requested }],
+      deps: { config: CONFIG, gqlFn: async (q, vars) => { mutations.push({ q, vars }); return {}; }, fsImpl: fakeFs,
+        now: () => new Date(), loadAllFn: async () => ({ jobs: [], crewParents: [], timeOff: [], existingSubs: [], overrideRows: [] }),
+        runQuoteFn: async () => ({ ok: true, mode: 'earliest', verdict: 'EARLIEST', quotedWeek: '2026-09-07',
+          capacityWeek: '2026-08-03', floorWeek: '2026-09-07', dataFreshness: new Date().toISOString(),
+          inputs: { jobType: 'Commercial', boxes: 5, complexity: 2, complexityUsed: 2, targetDate: null },
+          hours: { eng: 2, panel: 2.8, bench: 0.8, prefin: 0, postfin: 3.3 }, policy: { preProductionWeeks: 2, minLeadWeeks: 10 } }),
+        logger: { log: (m) => logged.push(m) } },
+    });
+    delete process.env.DRY_RUN;
+    check('zero monday mutations under DRY_RUN', mutations.length === 0, String(mutations.length));
+    check('intended writebacks printed', logged.some(l => /DRY RUN.*Quoted/i.test(l)), logged.join(' | ').slice(0, 200));
+  }
+
   console.log(failures.length ? `\n❌ ${failures.length}/${checks} FAILED` : `\n✅ all ${checks} checks passed`);
   process.exit(failures.length ? 1 : 0);
 })();

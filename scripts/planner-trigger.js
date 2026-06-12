@@ -256,6 +256,160 @@ function parseQuoteRows(items, config) {
   }));
 }
 
+async function setQuoteStatus(config, rowId, label, { gqlFn }) {
+  await gqlFn(
+    'mutation ($item: ID!, $board: ID!, $cv: JSON!) { change_multiple_column_values(item_id: $item, board_id: $board, column_values: $cv, create_labels_if_missing: true) { id } }',
+    { item: String(rowId), board: String(config.boardId),
+      cv: JSON.stringify({ [config.quoteColumns.status]: { label } }) });
+}
+
+async function writeQuoteResult(config, rowId, result, { gqlFn }) {
+  const cv = {
+    [config.quoteColumns.status]: { label: QUOTE_LABELS.quoted },
+    [config.quoteColumns.quotedWeek]: { date: result.quotedWeek },
+    [config.quoteColumns.capacityWeek]: { date: result.capacityWeek },
+  };
+  await gqlFn(
+    'mutation ($item: ID!, $board: ID!, $cv: JSON!) { change_multiple_column_values(item_id: $item, board_id: $board, column_values: $cv, create_labels_if_missing: true) { id } }',
+    { item: String(rowId), board: String(config.boardId), cv: JSON.stringify(cv) });
+  const { buildQuoteUpdate } = require('./quote-engine.js');
+  await gqlFn('mutation ($item: ID!, $body: String!) { create_update(item_id: $item, body: $body) { id } }',
+    { item: String(rowId), body: buildQuoteUpdate(result) });
+}
+
+async function postQuoteError(config, rowId, reason, { gqlFn }) {
+  try { await setQuoteStatus(config, rowId, QUOTE_LABELS.error, { gqlFn }); } catch (e) { /* self-heal corrects later */ }
+  try {
+    await gqlFn('mutation ($item: ID!, $body: String!) { create_update(item_id: $item, body: $body) { id } }',
+      { item: String(rowId), body: `Quote failed: ${reason}` });
+  } catch (e) { /* best-effort */ }
+}
+
+// Quote tick (spec §4.3): own lock (never planner.lock), 3-per-tick cap,
+// self-heal for stuck Quoting rows, defer entirely while a planner run/deploy
+// holds planner.lock, DRY_RUN prints instead of writing.
+const MAX_QUOTES_PER_TICK = 3;
+async function processQuotes({ rows = [], deps = {} } = {}) {
+  const _gqlFn = deps.gqlFn;
+  const _fsImpl = deps.fsImpl || fs;
+  const _now = deps.now || (() => new Date());
+  const _logger = deps.logger || console;
+  const _loadAll = deps.loadAllFn || (() => require('./rebalance-schedule.js').loadAll({}));
+  const _runQuote = deps.runQuoteFn || require('./quote-engine.js').runQuote;
+  const _userId = deps.notifyUserId || CHRIS_USER_ID;
+  const _plannerLock = deps.lockFile || DEFAULT_LOCK_FILE;
+  const _quoteLock = deps.quoteLockFile || DEFAULT_QUOTE_LOCK_FILE;
+  const _dryRun = process.env.DRY_RUN === '1';
+  const config = deps.config;
+  if (!config?.quotesGroupId || !config?.quoteColumns) return { processed: 0, skipped: 'quotes not set up' };
+
+  const out = { processed: 0, healed: 0, deferred: 0, errors: 0, remaining: 0 };
+
+  // Self-heal: Quoting + no live quote lock ⇒ that quote died mid-flight.
+  const lockState = readLockState({ fsImpl: _fsImpl, lockFile: _quoteLock, now: _now, staleMs: QUOTE_LOCK_STALE_MS });
+  for (const row of rows.filter(r => r.quoteStatus === QUOTE_LABELS.quoting)) {
+    if (lockState.state !== 'fresh') {
+      if (_dryRun) { _logger.log(`  [DRY RUN] would heal stuck-Quoting row ${row.rowId} → Quote Error`); continue; }
+      try { await setQuoteStatus(config, row.rowId, QUOTE_LABELS.error, { gqlFn: _gqlFn }); } catch (e) { _logger.log(`quote self-heal flip failed: ${e.message}`); }
+      try {
+        await _gqlFn('mutation ($item: ID!, $body: String!) { create_update(item_id: $item, body: $body) { id } }',
+          { item: String(row.rowId), body: 'This quote died mid-flight (machine sleep, crash, or kill while Quoting). Flip Quote Status back to Quote Requested to retry.' });
+      } catch (e) { /* best-effort */ }
+      out.healed++;
+    }
+  }
+
+  const requested = rows.filter(r => r.quoteStatus === QUOTE_LABELS.requested)
+    .sort((a, b) => a.rowId.localeCompare(b.rowId, undefined, { numeric: true }));
+  if (requested.length === 0) return out;
+
+  // Quotes against mid-rewrite boards lie — defer the whole batch one tick.
+  const plannerState = readLockState({ fsImpl: _fsImpl, lockFile: _plannerLock, now: _now });
+  if (plannerState.state === 'fresh') {
+    out.deferred = requested.length;
+    _logger.log(`planner-trigger: ${requested.length} quote(s) deferred — planner run/deploy in flight`);
+    return out;
+  }
+
+  const lock = acquireLock({ fsImpl: _fsImpl, lockFile: _quoteLock, now: _now, staleMs: QUOTE_LOCK_STALE_MS });
+  if (!lock.ok) {
+    out.deferred = requested.length;
+    _logger.log(`planner-trigger: quotes deferred — ${lock.reason}`);
+    return out;
+  }
+  try {
+    const batch = requested.slice(0, MAX_QUOTES_PER_TICK);
+    out.remaining = requested.length - batch.length;
+    const { loadQuotePolicy } = require('./quote-engine.js');
+    const { validateQuoteInput } = require('./quote-engine.js');
+
+    let policy;
+    try {
+      policy = deps.policy || loadQuotePolicy();
+    } catch (e) {
+      // config lint failure: loud + notify, rows untouched (retry next tick after fix)
+      _logger.log(`quote-policy lint FAILED: ${e.message}`);
+      if (!_dryRun) {
+        try { await notifyChris(config, `HTW Quotes: quote-policy.json failed lint — ${e.message}`, { gqlFn: _gqlFn, userId: _userId }); } catch (e2) { /* */ }
+      }
+      out.errors = requested.length;
+      return out;
+    }
+
+    for (const row of batch) {
+      const v = validateQuoteInput(row, policy);
+      if (!v.ok) {
+        if (_dryRun) { _logger.log(`  [DRY RUN] would flip row ${row.rowId} → Quote Error (${v.reason})`); }
+        else { await postQuoteError(config, row.rowId, v.reason, { gqlFn: _gqlFn }); }
+        out.processed++;
+        continue;
+      }
+      try {
+        if (_dryRun) { _logger.log(`  [DRY RUN] would flip row ${row.rowId} → Quoting`); }
+        else { try { await setQuoteStatus(config, row.rowId, QUOTE_LABELS.quoting, { gqlFn: _gqlFn }); } catch (e) { _logger.log(`Quoting claim failed (${e.message}) — proceeding under lock`); } }
+
+        const boards = await _loadAll();
+
+        // Torn-read guard (spec §4.3): a run/deploy that started mid-fetch may
+        // have half-rewritten the boards we just read.
+        const recheck = readLockState({ fsImpl: _fsImpl, lockFile: _plannerLock, now: _now });
+        if (recheck.state === 'fresh') {
+          if (_dryRun) { _logger.log(`  [DRY RUN] torn-read defer for row ${row.rowId}`); }
+          else { try { await setQuoteStatus(config, row.rowId, QUOTE_LABELS.requested, { gqlFn: _gqlFn }); } catch (e) { /* */ } }
+          out.deferred++;
+          continue;
+        }
+
+        const result = await _runQuote(row, { boards, policy, now: _now });
+        if (!result.ok) {
+          if (_dryRun) { _logger.log(`  [DRY RUN] would flip row ${row.rowId} → Quote Error (${result.reason})`); }
+          else { await postQuoteError(config, row.rowId, result.reason, { gqlFn: _gqlFn }); }
+          out.processed++;
+          continue;
+        }
+        if (_dryRun) {
+          _logger.log(`  [DRY RUN] would write row ${row.rowId} → Quoted (quoted ${result.quotedWeek}, capacity ${result.capacityWeek})`);
+        } else {
+          await writeQuoteResult(config, row.rowId, result, { gqlFn: _gqlFn });
+        }
+        out.processed++;
+      } catch (e) {
+        out.errors++;
+        out.processed++;
+        const msg = e.message || String(e);
+        if (_dryRun) { _logger.log(`  [DRY RUN] would flip row ${row.rowId} → Quote Error + notify (${msg})`); }
+        else {
+          await postQuoteError(config, row.rowId, msg, { gqlFn: _gqlFn });
+          try { await notifyChris(config, `HTW Quotes: quote on row ${row.rowId} failed — ${msg}`, { gqlFn: _gqlFn, userId: _userId }); } catch (e2) { _logger.log(`quote failure notification failed: ${e2.message}`); }
+        }
+      }
+    }
+    return out;
+  } finally {
+    releaseLock({ fsImpl: _fsImpl, lockFile: _quoteLock, token: lock.token });
+  }
+}
+
 // Orchestrator. mode: 'poll' (gated on Run Requested) | 'scheduled'
 // (unconditional). All I/O injectable via deps.
 async function runOnce({ mode = 'poll', deps = {} } = {}) {
@@ -435,6 +589,8 @@ module.exports = {
   DEFAULT_QUOTE_LOCK_FILE,
   readTickState,
   parseQuoteRows,
+  processQuotes,
+  MAX_QUOTES_PER_TICK,
 };
 
 // ============================================================================
@@ -455,37 +611,67 @@ if (require.main === module) {
   // the writer module is side-effect-free at require.
   const { defaultGql } = require('./write-capacity-view.js');
 
-  runOnce({
-    mode,
-    deps: {
-      gqlFn: defaultGql,
-      runPlannerFn: (opts) => {
-        const { runPlanner } = require('./run-planner.js');
-        const { replaceCapacityViewBody } = require('./write-capacity-view.js');
-        const { writeWeeklyBriefing } = require('./write-weekly-briefing.js');
-        return runPlanner({
-          ...opts,
-          deps: {
-            writeCapacityView: replaceCapacityViewBody,
-            writeWeeklyBriefing,
-          },
-        });
-      },
+  const deps = {
+    gqlFn: defaultGql,
+    runPlannerFn: (opts) => {
+      const { runPlanner } = require('./run-planner.js');
+      const { replaceCapacityViewBody } = require('./write-capacity-view.js');
+      const { writeWeeklyBriefing } = require('./write-weekly-briefing.js');
+      return runPlanner({
+        ...opts,
+        deps: {
+          writeCapacityView: replaceCapacityViewBody,
+          writeWeeklyBriefing,
+        },
+      });
     },
-  }).then(r => {
-    if (r.planError || r.error) process.exitCode = 1;
-    // Token death is NEVER silent — one loud line per tick until rotated
-    // (Task Scheduler history also shows the nonzero exits).
-    if (r.authFailure) {
-      console.error(`planner-trigger (${mode}): TOKEN AUTH FAILURE — monday rejected the token in C:\\Users\\chris\\Harris-Tools\\.token. The planner is BLIND until it is replaced.`);
-      process.exitCode = 2;
-      return;
+  };
+
+  (async () => {
+    if (mode === 'poll') {
+      // Combined tick: one request carries both trigger status + quote rows
+      // (avoids a second API call on every idle tick). A readTickState throw
+      // is handled exactly like the old status-read failure: runOnce receives
+      // no tickState and re-reads internally, where the poll catch path applies.
+      const config = loadTriggerConfig({});
+      let state = null;
+      try {
+        state = config ? await readTickState({ config, gqlFn: deps.gqlFn }) : null;
+      } catch (e) {
+        // Pass through — runOnce will re-read and handle the error (auth flag,
+        // quiet skip) via its own catch block, matching old behavior.
+      }
+      const r = await runOnce({ mode: 'poll', deps: { ...deps, ...(state ? { tickState: state, config } : {}) } });
+      if (r.planError || r.error) process.exitCode = 1;
+      if (r.authFailure) {
+        console.error(`planner-trigger (poll): TOKEN AUTH FAILURE — monday rejected the token in C:\\Users\\chris\\Harris-Tools\\.token. The planner is BLIND until it is replaced.`);
+        process.exitCode = 2;
+        return;
+      }
+      if (!r.ran && process.env.VERBOSE === '1') {
+        console.log(`planner-trigger (poll): ${r.skipped}`);
+      }
+      if (state && config?.quotesGroupId) {
+        const qr = await processQuotes({ rows: state.quoteRows, deps: { ...deps, config } });
+        // Idle-tick silence: only log when something actually happened.
+        if (qr.processed || qr.healed || qr.deferred) {
+          console.log(`quotes: ${qr.processed} processed, ${qr.healed} healed, ${qr.deferred} deferred, ${qr.remaining} remaining`);
+        }
+      }
+    } else {
+      // Scheduled mode — unchanged: unconditional run, no quote processing.
+      const r = await runOnce({ mode: 'scheduled', deps });
+      if (r.planError || r.error) process.exitCode = 1;
+      if (r.authFailure) {
+        console.error(`planner-trigger (scheduled): TOKEN AUTH FAILURE — monday rejected the token in C:\\Users\\chris\\Harris-Tools\\.token. The planner is BLIND until it is replaced.`);
+        process.exitCode = 2;
+        return;
+      }
+      if (!r.ran) {
+        console.log(`planner-trigger (scheduled): ${r.skipped}`);
+      }
     }
-    // Idle poll ticks stay silent — the daily log only carries real runs.
-    if (!r.ran && (mode === 'scheduled' || process.env.VERBOSE === '1')) {
-      console.log(`planner-trigger (${mode}): ${r.skipped}`);
-    }
-  }).catch(e => {
+  })().catch(e => {
     // Transient network loss (machine waking, wifi down) hits the status
     // read first. A poll tick has nothing to do offline — one short line,
     // not a stack trace per minute for the outage's duration. The next
