@@ -1040,6 +1040,11 @@ function makeFakeBoards() {
     check('weeklyBriefing writer still ran (ok === true)', result?.outputs?.weeklyBriefing?.ok === true, JSON.stringify(result?.outputs?.weeklyBriefing));
     const blob = captured.join('\n');
     check('failure surfaced loudly in console', /✗.*[Ll]ead-[Tt]imes.*FAILED/.test(blob), blob.slice(-400));
+    // Fix 3: shouldNotify must fire for lead-times failures so the trigger notifies Chris.
+    const { shouldNotify } = require('./planner-trigger.js');
+    const n = shouldNotify(result);
+    check('shouldNotify.notify === true for lead-times failure', n.notify === true, JSON.stringify(n));
+    check('shouldNotify reasons mention lead-times', n.reasons.some(r => /lead-times/i.test(r)), JSON.stringify(n.reasons));
   }
 
   console.log();

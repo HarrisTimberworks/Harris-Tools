@@ -189,6 +189,12 @@ function baseDeps(gql, fakeFs, runPlannerFn) {
     r4.outputs.capacityView = { ok: false, error: 'chunk 3 failed' };
     const s4 = buildRunSummary(r4, meta);
     check('writer failure: error text surfaced', /chunk 3 failed/.test(s4), s4);
+
+    const r5 = cleanResult();
+    r5.outputs.leadTimes = { ok: false, error: 'lead-times boom' };
+    const s5 = buildRunSummary(r5, meta);
+    check('lead-times failure: error text surfaced in summary', /lead-times boom/.test(s5), s5);
+    check('lead-times failure: mentions Lead-times / FAILED', /[Ll]ead-[Tt]imes.*FAIL/i.test(s5) || /FAIL.*[Ll]ead/i.test(s5), s5);
   }
 
   console.log('\nTest 5: shouldNotify — silent on clean success only');
@@ -200,6 +206,11 @@ function baseDeps(gql, fakeFs, runPlannerFn) {
     check('planError → notify', shouldNotify(r3).notify === true, JSON.stringify(shouldNotify(r3)));
     const r4 = cleanResult(); r4.outputs.weeklyBriefing = { ok: false, error: 'x' };
     check('writer failure → notify', shouldNotify(r4).notify === true, JSON.stringify(shouldNotify(r4)));
+    const r5 = cleanResult(); r5.outputs.leadTimes = { ok: false, error: 'lead-times boom' };
+    check('lead-times failure → notify', shouldNotify(r5).notify === true, JSON.stringify(shouldNotify(r5)));
+    check('lead-times failure reason mentions lead-times',
+      shouldNotify(r5).reasons.some(r => /lead-times/i.test(r)),
+      JSON.stringify(shouldNotify(r5).reasons));
   }
 
   console.log('\nTest 6: loadTriggerConfig — missing → null, valid → object');

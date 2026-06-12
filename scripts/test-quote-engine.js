@@ -99,12 +99,26 @@ console.log('Test 6: quoteRunPlan — synthetic job actually PLACES (the silent-
 
   console.log('Test 7: quoteRunPlan structurally cannot write a plan file');
   const logsDir = path.join(__dirname, '..', 'logs');
-  const beforeFiles = new Set(fs.existsSync(logsDir) ? fs.readdirSync(logsDir) : []);
+  // Record the mtime of every existing rebalance-plan-*.json BEFORE the call.
+  const existingPlanFiles = (fs.existsSync(logsDir) ? fs.readdirSync(logsDir) : [])
+    .filter(f => f.startsWith('rebalance-plan-') && f.endsWith('.json'));
+  const beforeMtimes = new Map(existingPlanFiles.map(f => {
+    try { return [f, fs.statSync(path.join(logsDir, f)).mtimeMs]; } catch (e) { return [f, null]; }
+  }));
+  const beforeSet = new Set(existingPlanFiles);
   await quoteRunPlan(emptyBoards(16), sj);
   const afterFiles = fs.existsSync(logsDir) ? fs.readdirSync(logsDir) : [];
   check('no new rebalance-plan-*.json in logs/',
-    !afterFiles.some(f => f.startsWith('rebalance-plan-') && !beforeFiles.has(f)),
+    !afterFiles.some(f => f.startsWith('rebalance-plan-') && !beforeSet.has(f)),
     'quoteRunPlan wrote a plan file — savePath guard broken');
+  // Every pre-existing file must have the same mtime (not overwritten).
+  const allMtimesUnchanged = existingPlanFiles.every(f => {
+    try {
+      return fs.statSync(path.join(logsDir, f)).mtimeMs === beforeMtimes.get(f);
+    } catch (e) { return true; /* file gone is also fine */ }
+  });
+  check('existing rebalance-plan-*.json mtimes unchanged',
+    allMtimesUnchanged, 'at least one existing plan file was overwritten');
 
   console.log('Test 8: quoteRunPlan(boards, null) = baseline, no synthetic job');
   const base = await quoteRunPlan(emptyBoards(16), null);
@@ -141,8 +155,27 @@ console.log('Test 6: quoteRunPlan — synthetic job actually PLACES (the silent-
   console.log('Test 13: a warning naming the quote job is infeasible');
   const warnRep = { ...goodRep, warnings: ['Job QUOTE - x: 4h unplaced at Post Fin Cab Assembly'] };
   check('quote-named warning rejects', assessCandidate(baseRep, warnRep, fakeJob).feasible === false);
-  check('unrelated warnings ignored',
-    assessCandidate(baseRep, { ...goodRep, warnings: ['Job SciTech has no delivery date — skipping'] }, fakeJob).feasible === true);
+  // Unrelated warnings: the same warning must appear in BOTH baseline and
+  // candidate to be treated as background noise (multiset diff).
+  const bgWarn = 'Job SciTech has no delivery date — skipping';
+  check('unrelated warnings ignored when present in both baseline and candidate',
+    assessCandidate(
+      { ...baseRep, warnings: [bgWarn] },
+      { ...goodRep, warnings: [bgWarn] },
+      fakeJob).feasible === true);
+  // Displacement regression: baseline has no warnings; candidate has an
+  // unplaced-hours warning for a DIFFERENT (committed) job → infeasible,
+  // reason prefixed with "new warning vs baseline".
+  const displacedWarn = 'Job SH-McMorris / Post Fin Cab Assembly: 6 hrs could not be placed within window';
+  const displaceRes = assessCandidate(
+    { ...baseRep, warnings: [] },
+    { ...goodRep, warnings: [displacedWarn] },
+    fakeJob);
+  check('displacement (new warning for committed job) is infeasible', displaceRes.feasible === false,
+    JSON.stringify(displaceRes.reasons));
+  check('displacement reason prefixed with "new warning vs baseline"',
+    displaceRes.reasons.some(r => r.startsWith('new warning vs baseline')),
+    displaceRes.reasons.join(' | '));
 
   console.log('Test 14: date helpers — Monday snapping (spec §3/§4.1)');
   const { mondayOnOrAfter, runQuote, validateQuoteInput, buildQuoteUpdate } = require('./quote-engine.js');
@@ -205,6 +238,62 @@ console.log('Test 6: quoteRunPlan — synthetic job actually PLACES (the silent-
       `${noFit.verdict} ${noFit.bottleneck}`);
     check('doesn\'t-fit still reports earliest-that-fits in capacityWeek', !!noFit.capacityWeek);
 
+    console.log('Test 18b: Fix 4 — target beyond walk cap still resolves FITS if target week is feasible');
+    {
+      const { WALK_CAP_WEEKS, buildSyntheticJob: bsj, quoteRunPlan: qrp, assessCandidate: ac } = require('./quote-engine.js');
+      // Stub runPlanFn: every walk candidate (first WALK_CAP_WEEKS calls) is
+      // infeasible (returns empty placements), but the target-week call (at
+      // index WALK_CAP_WEEKS) is fully placed.
+      const farBoards = emptyBoards(40);
+      let planCalls = 0;
+      const stubRunPlan = async (b) => {
+        const calls = planCalls++;
+        // Walk calls: 1 baseline + WALK_CAP_WEEKS walk candidates = indices 0..WALK_CAP_WEEKS.
+        // Target check: next call after walk exhausts = index WALK_CAP_WEEKS+1.
+        if (calls === 0) return { placements: [], warnings: [], capacityGrid: {} }; // baseline
+        if (calls <= WALK_CAP_WEEKS) {
+          // Walk candidates: return 0 placements so none are feasible.
+          return { placements: [], warnings: [], capacityGrid: {} };
+        }
+        // Target week call: return fully-placed result for the synthetic job.
+        const synthJob = (b.jobs || []).find(j => String(j.id).startsWith('QUOTE-'));
+        if (synthJob) {
+          const stationHours = Object.values(synthJob.hours).reduce((s, h) => s + h, 0);
+          return {
+            placements: [
+              { jobId: synthJob.id, hours: stationHours },
+              { jobId: synthJob.id, hours: 2 }, // P&S
+              { jobId: synthJob.id, hours: 2 }, // Delivery
+            ],
+            warnings: [],
+            capacityGrid: {},
+          };
+        }
+        return { placements: [], warnings: [], capacityGrid: {} };
+      };
+
+      const farTarget = mondayWeeksFromNow(WALK_CAP_WEEKS + 2);
+      const farRes = await runQuote(
+        { rowId: '99', name: 'FarTarget', jobType: 'Res - Face Frame', boxes: 25, complexity: 2, targetDate: farTarget },
+        { boards: farBoards, policy: pol, runPlanFn: stubRunPlan });
+      check('target beyond cap with feasible target → ok:true', farRes.ok === true,
+        JSON.stringify({ ok: farRes.ok, reason: farRes.reason, verdict: farRes.verdict }));
+      check('verdict is FITS', farRes.verdict === 'FITS' || farRes.verdict === 'FITS_BELOW_FLOOR',
+        String(farRes.verdict));
+      check('capacityWeek is null (walk exhausted)', farRes.capacityWeek === null,
+        String(farRes.capacityWeek));
+
+      // No-target exhaustion still returns ok:false mentioning WALK_CAP_WEEKS.
+      planCalls = 0;
+      const exhaustedRes = await runQuote(
+        { rowId: '100', name: 'Exhausted', jobType: 'Res - Face Frame', boxes: 25, complexity: 2 },
+        { boards: farBoards, policy: pol, runPlanFn: stubRunPlan });
+      check('no-target exhaustion → ok:false', exhaustedRes.ok === false, JSON.stringify(exhaustedRes));
+      check('no-target exhaustion reason mentions walk cap weeks',
+        String(exhaustedRes.reason).includes(String(WALK_CAP_WEEKS)),
+        String(exhaustedRes.reason));
+    }
+
     console.log('Test 19: update body carries both numbers + disclaimer + freshness');
     const body = buildQuoteUpdate(res);
     check('headline quoted week', body.includes(res.quotedWeek));
@@ -213,6 +302,13 @@ console.log('Test 6: quoteRunPlan — synthetic job actually PLACES (the silent-
     check('PM disclaimer', body.includes('Confirm with PM'));
     check('freshness timestamp', body.includes(res.dataFreshness.slice(0, 10)));
     check('inputs echoed', body.includes('25') && body.includes('Res - Face Frame'));
+    // Fix 6: string complexity matching numeric complexityUsed must NOT show "(rounded from N)"
+    {
+      const fakeRes = { ...res, inputs: { ...res.inputs, complexity: '2', complexityUsed: 2 } };
+      const fakeBody = buildQuoteUpdate(fakeRes);
+      check('complexity string "2" matching complexityUsed 2 → no "(rounded from)"',
+        !fakeBody.includes('rounded from'), fakeBody.split('\n').find(l => l.includes('Input')));
+    }
 
     console.log(failures.length ? `\n❌ ${failures.length}/${checks} FAILED` : `\n✅ all ${checks} checks passed`);
     process.exit(failures.length ? 1 : 0);

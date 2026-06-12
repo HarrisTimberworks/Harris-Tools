@@ -161,6 +161,12 @@ function buildRunSummary(result, { mode, startedAt, finishedAt, deploy } = {}) {
       ? `Weekly Briefing: week ${wb.weekISO}${wb.created ? ' (doc created)' : ''}`
       : `Weekly Briefing: FAILED — ${wb.error}`);
   }
+  const lt = result?.outputs?.leadTimes;
+  if (lt) {
+    lines.push(lt.ok
+      ? `Lead-times artifacts: written`
+      : `Lead-times artifacts: FAILED — ${lt.error}`);
+  }
   if (deploy) {
     lines.push(`DEPLOYED to Crew Allocation: ${deploy.deleted} deleted / ${deploy.created} created subitems`
       + (deploy.subSkipped ? ` (${deploy.subSkipped} sub placements ops-only)` : '')
@@ -181,6 +187,9 @@ function shouldNotify(result) {
   }
   if (result?.outputs?.weeklyBriefing && result.outputs.weeklyBriefing.ok === false) {
     reasons.push(`Weekly Briefing regeneration failed: ${result.outputs.weeklyBriefing.error}`);
+  }
+  if (result?.outputs?.leadTimes && result.outputs.leadTimes.ok === false) {
+    reasons.push(`lead-times artifacts failed: ${result.outputs.leadTimes.error}`);
   }
   // AUDIT FIX (2026-06-11): config-lint errors are silent no-ops waiting to
   // bite a rebalance — they warrant a human.
@@ -234,11 +243,14 @@ async function readTickState({ config, gqlFn }) {
   }
   const q = `query ($item: [ID!], $board: [ID!], $group: [String!]) {
     items(ids: $item) { column_values { id text } }
-    boards(ids: $board) { groups(ids: $group) { items_page(limit: 50) { items { id name column_values { id text } } } } }
+    boards(ids: $board) { groups(ids: $group) { items_page(limit: 200) { items { id name column_values { id text } } } } }
   }`;
   const read = await gqlFn(q, { item: [String(config.itemId)], board: [String(config.boardId)], group: [String(config.quotesGroupId)] });
   const statusText = (read?.items?.[0]?.column_values || []).find(c => c.id === config.statusColumnId)?.text || null;
   const items = read?.boards?.[0]?.groups?.[0]?.items_page?.items || [];
+  if (items.length >= 200) {
+    console.error(`planner-trigger: QUOTES PAGE FULL (${items.length} rows) — rows beyond the first page are INVISIBLE to the poll. Archive old quote rows (move to another group/board) to restore visibility.`);
+  }
   return { statusText, quoteRows: parseQuoteRows(items, config) };
 }
 
@@ -309,7 +321,7 @@ async function processQuotes({ rows = [], deps = {} } = {}) {
   const lockState = readLockState({ fsImpl: _fsImpl, lockFile: _quoteLock, now: _now, staleMs: QUOTE_LOCK_STALE_MS });
   for (const row of rows.filter(r => r.quoteStatus === QUOTE_LABELS.quoting)) {
     if (lockState.state !== 'fresh') {
-      if (_dryRun) { _logger.log(`  [DRY RUN] would heal stuck-Quoting row ${row.rowId} → Quote Error`); continue; }
+      if (_dryRun) { out.healed++; _logger.log(`  [DRY RUN] would heal stuck-Quoting row ${row.rowId} → Quote Error`); continue; }
       try { await setQuoteStatus(config, row.rowId, QUOTE_LABELS.error, { gqlFn: _gqlFn }); } catch (e) { _logger.log(`quote self-heal flip failed: ${e.message}`); }
       try {
         await _gqlFn('mutation ($item: ID!, $body: String!) { create_update(item_id: $item, body: $body) { id } }',

@@ -72,6 +72,65 @@ console.log('Test 1: readTickState — ONE request carrying trigger status + quo
   check('status text extracted', state.statusText === 'Idle', String(state.statusText));
   check('quote rows extracted', state.quoteRows.length === 1);
   check('query carries both root fields', lastQuery.includes('items(ids:') && lastQuery.includes('boards(ids:'));
+  check('query uses limit:200 (not 50)', lastQuery.includes('limit: 200'), lastQuery.slice(0, 300));
+
+  console.log('Test 1b: readTickState — 200-item page triggers console.error warning');
+  {
+    const bigItems = Array.from({ length: 200 }, (_, i) => ({
+      id: String(600 + i), name: `Quote ${i}`, column_values: [
+        { id: 'dropdown_jt', text: 'Commercial' }, { id: 'numeric_bx', text: '5' },
+        { id: 'numeric_cx', text: '2' }, { id: 'date_tg', text: '' },
+        { id: 'color_qs', text: 'Quote Requested' }, { id: 'date_qw', text: '' }, { id: 'date_cw', text: '' },
+      ],
+    }));
+    const gqlBig = async () => ({
+      items: [{ column_values: [{ id: 'color_trigger', text: 'Idle' }] }],
+      boards: [{ groups: [{ items_page: { items: bigItems } }] }],
+    });
+    const errored = [];
+    const origError = console.error;
+    console.error = (...args) => errored.push(args.join(' '));
+    const bigState = await readTickState({ config: CONFIG, gqlFn: gqlBig });
+    console.error = origError;
+    check('200-item page still returns rows', bigState.quoteRows.length === 200, String(bigState.quoteRows.length));
+    check('console.error fired with QUOTES PAGE FULL', errored.some(m => /QUOTES PAGE FULL/i.test(m)),
+      errored.join(' | ').slice(0, 200));
+  }
+
+  console.log('Test 1c: QUOTE_LOCK_STALE_MS constant');
+  check('QUOTE_LOCK_STALE_MS === 5 * 60 * 1000',
+    QUOTE_LOCK_STALE_MS === 5 * 60 * 1000, String(QUOTE_LOCK_STALE_MS));
+
+  console.log('Test 1d: torn-read re-check — planner.lock created during loadAll flips row back to Quote Requested');
+  {
+    const plannerLockPath = require('path').join(__dirname, '..', 'logs', 'planner.lock');
+    const { acquireLock } = require('./planner-trigger.js');
+    const { files: files1d, fs: fakeFs1d } = makeFakeFs();
+    const mutations1d = [];
+    const gqlFn1d = async (q, vars) => { mutations1d.push({ q, vars }); return {}; };
+    const r1d = await processQuotes({
+      rows: [{ rowId: '507', name: 'TornRead', jobType: 'Commercial', boxes: '10', complexity: '2', targetDate: null, quoteStatus: QUOTE_LABELS.requested }],
+      deps: {
+        config: CONFIG, gqlFn: gqlFn1d, fsImpl: fakeFs1d, now: () => new Date(),
+        // loadAllFn creates the planner.lock during its call (simulates a planner
+        // run starting right as we read the boards).
+        loadAllFn: async () => {
+          acquireLock({ fsImpl: fakeFs1d, lockFile: plannerLockPath, now: () => new Date() });
+          return { jobs: [], crewParents: [], timeOff: [], existingSubs: [], overrideRows: [] };
+        },
+        runQuoteFn: async () => { throw new Error('engine must not run'); },
+        logger: { log: () => {} },
+      },
+    });
+    check('torn-read: row deferred (not processed)', r1d.deferred === 1,
+      JSON.stringify(r1d));
+    check('torn-read: row flipped back to Quote Requested',
+      mutations1d.some(m => m.vars?.cv?.includes('Quote Requested')),
+      JSON.stringify(mutations1d.map(m => m.vars?.cv)));
+    check('torn-read: engine never ran',
+      !mutations1d.some(m => m.vars?.cv?.includes('Quoted')),
+      JSON.stringify(mutations1d.map(m => m.vars?.cv)));
+  }
 
   console.log('Test 2: readTickState without quotesGroupId falls back to single-item query (pre-setup safety)');
   let fallbackQuery = '';

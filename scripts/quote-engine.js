@@ -147,8 +147,17 @@ function assessCandidate(baseline, candidate, syntheticJob) {
   if (placed + 0.01 < expected) {
     reasons.push(`only ${Number(placed.toFixed(1))}h of ${Number(expected.toFixed(1))}h placed`);
   }
+  // Any warning that is new vs baseline is an infeasibility reason — the only
+  // input delta is the synthetic job, so a new warning means the quote caused
+  // it (displaced a committed job's hours, broke a window, etc). Multiset
+  // diff: identical warnings appearing in both runs are background noise.
+  const baseCounts = new Map();
+  for (const w of baseline.warnings || []) baseCounts.set(String(w), (baseCounts.get(String(w)) || 0) + 1);
   for (const w of candidate.warnings || []) {
-    if (String(w).includes(syntheticJob.name)) reasons.push(String(w));
+    const s = String(w);
+    const n = baseCounts.get(s) || 0;
+    if (n > 0) { baseCounts.set(s, n - 1); continue; }
+    reasons.push(s.includes(syntheticJob.name) ? s : `new warning vs baseline: ${s}`);
   }
   // Strict no-worse-than-baseline (diff key crew × week): a quote must not
   // deepen ANY existing overload. Missing baseline slot ⇒ baseline over = 0.
@@ -173,7 +182,7 @@ function mondayOnOrAfter(dateISO) {
   return monday === dateISO ? dateISO : toISO(addDays(parseISO(monday), 7));
 }
 
-function validateQuoteInput(raw, policy) {
+function validateQuoteInput(raw, policy, { now = () => new Date() } = {}) {
   const boxes = Number(raw.boxes);
   if (!Number.isFinite(boxes) || boxes < 1) {
     return { ok: false, reason: `Boxes must be a number ≥ 1 (got '${raw.boxes ?? ''}')` };
@@ -186,7 +195,7 @@ function validateQuoteInput(raw, policy) {
     return { ok: false, reason: `Complexity '${raw.complexity}' must round to an integer 1-5` };
   }
   if (raw.targetDate) {
-    const walkStart = mondayOnOrAfter(toISO(addDays(new Date(), policy.preProductionWeeks * 7)));
+    const walkStart = mondayOnOrAfter(toISO(addDays(now(), policy.preProductionWeeks * 7)));
     const targetWeek = toISO(getMondayOfWeek(parseISO(raw.targetDate)));
     if (targetWeek < walkStart) {
       return { ok: false, reason: `Target ${raw.targetDate} is in the past or inside the ${policy.preProductionWeeks}-week pre-production window (earliest quotable week: ${walkStart})` };
@@ -199,7 +208,7 @@ function validateQuoteInput(raw, policy) {
 // production; fixtures in tests). Returns the result object consumed by the
 // trigger writeback and the lead-times writer — NEVER mutates anything.
 async function runQuote(rawInput, { boards, policy, now = () => new Date(), runPlanFn } = {}) {
-  const v = validateQuoteInput(rawInput, policy);
+  const v = validateQuoteInput(rawInput, policy, { now });
   if (!v.ok) return { ok: false, reason: v.reason };
   const input = v.input;
   const opts = runPlanFn ? { runPlanFn, now } : { now };
@@ -226,19 +235,34 @@ async function runQuote(rawInput, { boards, policy, now = () => new Date(), runP
     if (t.feasible) { capacityWeek = week; break; }
     lastFail = t;
   }
-  if (!capacityWeek) {
-    return { ok: false, reason: `does not fit within ${WALK_CAP_WEEKS} weeks — last blocker: ${lastFail?.reasons?.[0] || 'unknown'}` };
-  }
-
-  const common = {
+  const buildCommon = (capWeek) => ({
     ok: true,
     inputs: { jobType: input.jobType, boxes: input.boxes, complexity: input.complexity,
               complexityUsed: normalizeComplexity(input.complexity), targetDate: input.targetDate || null },
-    hours: buildSyntheticJob(input, policy, capacityWeek).hours,
-    capacityWeek, floorWeek,
+    hours: buildSyntheticJob(input, policy, capWeek || floorWeek).hours,
+    capacityWeek: capWeek,
+    floorWeek,
     dataFreshness: now().toISOString(),
     policy: { preProductionWeeks: policy.preProductionWeeks, minLeadWeeks: policy.minLeadWeeks[input.jobType] },
-  };
+  });
+
+  if (!capacityWeek) {
+    if (input.targetDate) {
+      const targetWeek = toISO(getMondayOfWeek(parseISO(input.targetDate)));
+      const t = await tryWeek(targetWeek);
+      if (t.feasible) {
+        const common = buildCommon(null);
+        if (targetWeek >= floorWeek) {
+          return { ...common, mode: 'target', verdict: 'FITS', quotedWeek: targetWeek, targetWeek, bottleneck: null };
+        }
+        return { ...common, mode: 'target', verdict: 'FITS_BELOW_FLOOR',
+          quotedWeek: targetWeek > floorWeek ? targetWeek : floorWeek, targetWeek, bottleneck: null };
+      }
+    }
+    return { ok: false, reason: `does not fit within ${WALK_CAP_WEEKS} weeks — last blocker: ${lastFail?.reasons?.[0] || 'unknown'}` };
+  }
+
+  const common = buildCommon(capacityWeek);
 
   if (!input.targetDate) {
     return { ...common, mode: 'earliest', verdict: 'EARLIEST',
@@ -254,9 +278,10 @@ async function runQuote(rawInput, { boards, policy, now = () => new Date(), runP
     return { ...common, mode: 'target', verdict: 'FITS_BELOW_FLOOR',
       quotedWeek: targetWeek > floorWeek ? targetWeek : floorWeek, targetWeek, bottleneck: null };
   }
+  const named = t.reasons.find(r => !r.startsWith('only ')) || t.reasons[0];
   return { ...common, mode: 'target', verdict: 'DOES_NOT_FIT',
     quotedWeek: capacityWeek > floorWeek ? capacityWeek : floorWeek, targetWeek,
-    bottleneck: t.reasons[0] || 'unknown constraint' };
+    bottleneck: named || 'unknown constraint' };
 }
 
 function buildQuoteUpdate(res) {
@@ -273,8 +298,9 @@ function buildQuoteUpdate(res) {
     lines.push(`Earliest that fits: w/o ${res.capacityWeek}`);
   }
   lines.push('');
-  lines.push(`Capacity says earliest: **w/o ${res.capacityWeek}** · policy floor: **w/o ${res.floorWeek}** (${res.policy.minLeadWeeks} wks min) → quoted: **w/o ${res.quotedWeek}**`);
-  lines.push(`Inputs: ${res.inputs.jobType}, ${res.inputs.boxes} boxes, complexity ${res.inputs.complexityUsed}${res.inputs.complexity !== res.inputs.complexityUsed ? ` (rounded from ${res.inputs.complexity})` : ''}. Defaults: finishing days, no inset/P-Lam/miter-fold/countertop/backsplash.`);
+  const capacityDisplay = res.capacityWeek != null ? `w/o ${res.capacityWeek}` : `beyond the ${WALK_CAP_WEEKS}-week capacity walk`;
+  lines.push(`Capacity says earliest: **${capacityDisplay}** · policy floor: **w/o ${res.floorWeek}** (${res.policy.minLeadWeeks} wks min) → quoted: **w/o ${res.quotedWeek}**`);
+  lines.push(`Inputs: ${res.inputs.jobType}, ${res.inputs.boxes} boxes, complexity ${res.inputs.complexityUsed}${Number(res.inputs.complexity) !== res.inputs.complexityUsed ? ` (rounded from ${res.inputs.complexity})` : ''}. Defaults: finishing days, no inset/P-Lam/miter-fold/countertop/backsplash.`);
   lines.push(`Station hours: Eng ${res.hours.eng} · Panel ${res.hours.panel} · Bench ${res.hours.bench} · PreFin ${res.hours.prefin} · PostFin ${res.hours.postfin}. Pre-production ${res.policy.preProductionWeeks} wks included.`);
   lines.push(`Board data as of ${res.dataFreshness}.`);
   lines.push('');
@@ -282,8 +308,9 @@ function buildQuoteUpdate(res) {
   return lines.join('\n');
 }
 
-// Reference-basket quotes for the dealer artifact (spec §4.5). Shares ONE
-// baseline across the basket; returns ONLY what the public artifact may carry.
+// Reference-basket quotes for the dealer artifact (spec §4.5). Each basket
+// entry runs independently through runQuote (~3 separate baselines, milliseconds
+// each); returns ONLY what the public artifact may carry.
 async function leadTimesForBasket(boards, policy, { now = () => new Date(), runPlanFn } = {}) {
   const results = [];
   for (const b of policy.referenceBasket) {

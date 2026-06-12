@@ -104,7 +104,7 @@ Read the result: **Quoted Week** is the number to give the client (policy floor 
 
 **Quote Error?** The reason is on the item's update (bad input, or an engine failure — Chris is notified for the latter). Fix the row, set Quote Status back to **Quote Requested**. Re-quoting an old row works the same way — columns show the latest answer, updates keep the history.
 
-Quote rows are an audit trail — leave them; they never touch the schedule or the planner. (Never fill **To Week** or the overrides **Status** column on a quote row — those belong to override rows and their auto-stale automations.)
+Quote rows are an audit trail — leave them; they never touch the schedule or the planner. (Never fill **To Week** or the overrides **Status** column on a quote row — those belong to override rows and their auto-stale automations.) If the group ever grows past ~200 rows, archive the oldest (move to a different group or board) — the poll reads one page.
 
 ---
 
