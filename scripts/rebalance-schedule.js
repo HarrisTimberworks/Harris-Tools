@@ -79,7 +79,50 @@ const COL_PL = {
   finishingDays: 'numeric_mm2hdd1z',
   pLam: 'boolean_mm2f3589',
   productionNotes: 'long_text_mm26686j',
+  // 2026-06-11 — shop-floor per-station completion (multi-select dropdown,
+  // labels Eng/Panel/Bench/PreFin/PostFin). Board-done beats config beats
+  // formula; see computeRemainingHours.
+  stationsComplete: 'dropdown_mm48p4zs',
 };
+
+// ============================================================================
+// Stations-Complete tracking (2026-06-11)
+// ============================================================================
+
+const STATION_LABEL_TO_KEY = Object.freeze({
+  Eng: 'eng',
+  Panel: 'panel',
+  Bench: 'bench',
+  PreFin: 'prefin',
+  PostFin: 'postfin',
+});
+const STATION_HOUR_KEYS = Object.freeze(['eng', 'panel', 'bench', 'prefin', 'postfin']);
+
+// Per-station precedence: board-done → 0 (ALWAYS wins — the board is live
+// shop-floor truth and kills config staleness) → else config remainingHours
+// → else formula. Unknown labels are ignored.
+function computeRemainingHours(formulaHours, overrideRemaining, stationsComplete) {
+  const done = new Set((stationsComplete || []).map(l => STATION_LABEL_TO_KEY[l]).filter(Boolean));
+  const base = overrideRemaining && overrideRemaining !== null ? overrideRemaining : (formulaHours || {});
+  const out = {};
+  for (const k of STATION_HOUR_KEYS) {
+    out[k] = done.has(k) ? 0 : Number(base[k] || 0);
+  }
+  return out;
+}
+
+// True when EVERY station with formula hours > 0 is marked done. Drives the
+// derived "Ready to Ship" status in run-planner.js: production is finished
+// but the job stays ACTIVE so P&S/Delivery keep planning (the Liz Stapp
+// Complete-cliff fix — flipping straight to Complete dropped jobs while
+// delivery work remained). All-zero formulas → false (nothing to complete
+// is not the same as ready).
+function isReadyToShip(formulaHours, stationsComplete) {
+  const done = new Set((stationsComplete || []).map(l => STATION_LABEL_TO_KEY[l]).filter(Boolean));
+  const required = STATION_HOUR_KEYS.filter(k => Number((formulaHours || {})[k] || 0) > 0);
+  if (required.length === 0) return false;
+  return required.every(k => done.has(k));
+}
 
 // Column IDs on Crew Allocation parent board
 const COL_CA = {
@@ -395,14 +438,18 @@ async function loadJobs(gqlFn = gql) {
       postfin: parseFloat(cv[COL_PL.postfin]?.display_value || '0'),
     };
 
-    // If override specifies remainingHours, use those; null means "use formula as-is (full job)"
-    const hours = override.remainingHours && override.remainingHours !== null
-      ? override.remainingHours
-      : formulaHours;
+    // Stations-Complete (2026-06-11): dropdown text is comma-separated
+    // labels ("Eng, Panel"). Board-done stations zero out regardless of
+    // override/formula — see computeRemainingHours.
+    const stationsComplete = (cv[COL_PL.stationsComplete]?.text || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+
+    const hours = computeRemainingHours(formulaHours, override.remainingHours || null, stationsComplete);
 
     return {
       id: it.id,
       name: it.name,
+      stationsComplete,
       status: cv[COL_PL.status]?.text || 'Not Started',
       subtype: cv[COL_PL.subtype]?.text || 'Commercial',
       delivery: cv[COL_PL.delivery]?.display_value || null,
@@ -1458,7 +1505,6 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
   const allPlacements = [];
   const allRejections = new Map();  // crew → reason (last reason wins; aggregated for warning)
   const allWarnings = [];  // PATCH 4: forceAssignment warnings (cap exceeded, missing parent, etc.)
-  let totalUnplaced = 0;
 
   // PATCH 5 (2026-04-25): cumulative-budget force tracking.
   // Was: const perWeek = hours / weeks.length, force capped at perWeek per week.
@@ -1541,14 +1587,12 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
         const others = [...candidates.filter(c => c !== p), ...generalSubs, ...fallbackSubs];
         const result = allocateStationWeek(grid, job, station, wk, perPrimary, [...assignedSubs, p, ...others]);
         allPlacements.push(...result.placements);
-        totalUnplaced += result.unplaced;
         autoPlacedThisWeek += (perPrimary - result.unplaced);
         for (const r of result.rejections || []) allRejections.set(r.crew, r.reason);
       }
     } else {
       const result = allocateStationWeek(grid, job, station, wk, remainingThisWeek, candidatesForWk);
       allPlacements.push(...result.placements);
-      totalUnplaced += result.unplaced;
       autoPlacedThisWeek += (remainingThisWeek - result.unplaced);
       for (const r of result.rejections || []) allRejections.set(r.crew, r.reason);
     }
@@ -1557,7 +1601,16 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
     remainingBudget = Math.max(0, remainingBudget - autoPlacedThisWeek);
   }
 
-  return { placements: allPlacements, unplaced: totalUnplaced, rejections: allRejections, warnings: allWarnings };
+  // PATCH 7 (2026-06-11): unplaced = end-of-loop remainingBudget, NOT the sum
+  // of per-week shortfalls. The budget tracker rolls an unfilled week's share
+  // forward (remainingBudget only shrinks when hours actually land), so a
+  // shortfall can be absorbed later — by a forceAssignment (forces deduct from
+  // remainingBudget only) or by auto-placement in a later week. Summing
+  // per-week shortfalls double-counted those rolled-forward hours and emitted
+  // "could not be placed" warnings for fully-placed demand (Spencer Benchwork
+  // 31.5h force, job 11835189937). The last week's perWeek equals the entire
+  // remaining budget, so anything genuinely unplaceable survives here.
+  return { placements: allPlacements, unplaced: Number(remainingBudget.toFixed(2)), rejections: allRejections, warnings: allWarnings };
 }
 
 // ============================================================================
@@ -1625,7 +1678,9 @@ async function runPlan(boards, opts = {}) {
   try {
 
   // Filter to active jobs (Not Started or Scheduled)
-  const activeJobs = jobs.filter(j => ['Not Started', 'Scheduled', 'Ready to Schedule', 'Finishing'].includes(j.status));
+  // 'Ready to Ship' (derived when all production stations are marked done)
+  // stays ACTIVE — only P&S/Delivery remain to plan for such jobs.
+  const activeJobs = jobs.filter(j => ['Not Started', 'Scheduled', 'Ready to Schedule', 'Finishing', 'Ready to Ship'].includes(j.status));
   console.log(`Active jobs to schedule: ${activeJobs.length}`);
 
   // Sort jobs by delivery date ascending (soonest first gets priority)
@@ -2186,6 +2241,14 @@ module.exports = {
   // in test-multi-primary-spillover.js) and matrix-vs-doc validation tooling.
   ROUTING,
   SECONDARY,
+  // Stations-Complete tracking (2026-06-11).
+  computeRemainingHours,
+  isReadyToShip,
+  STATION_LABEL_TO_KEY,
+  // Overrides config exported for tests (synthetic forceAssignment injection
+  // in test-force-unplaced-accounting.js — getForceAssignments falls back to
+  // OVERRIDES.forceAssignments when no runPlan merge is active).
+  OVERRIDES,
   translateOverrideRows,
   mergeForceAssignments,
   mergeCrewExclusions,

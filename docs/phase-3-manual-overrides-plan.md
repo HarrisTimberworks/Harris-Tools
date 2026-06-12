@@ -63,6 +63,10 @@ Webhooks + button column (Phase 4), cloud VPS (Phase 4), SMTP email (monday rela
 
 ## Operator runbook (Bob / anyone)
 
+**To mark production progress (added 2026-06-11):**
+
+When a station's work on a job is fully done, open the **Production Load Board** and tick that station in the job's **✅ Stations Complete** column (Eng / Panel / Bench / PreFin / PostFin). The next planner run zeroes that station's remaining hours — no config edits, no Chris. When every station with work is ticked, the planner flips the job to **Ready to Ship** automatically (delivery work keeps planning until the delivery date). Partially-done stations stay unticked — Chris handles those via config.
+
 **To request a schedule re-plan:**
 
 1. Open the **🛠️ HTW Manual Overrides** board. Enter/edit override rows in the **Active** group as usual (or change nothing, if you just want fresh docs).

@@ -191,6 +191,9 @@ The scheduler uses this to auto-assign subitems. Keyed by [Job Subtype][Station]
 - Finish Drop Date: `date_mm26qqv3`
 - Finish Return Date: `date_mm2k17ef`
 
+**Progress tracking (added 2026-06-11):**
+- ✅ Stations Complete: `dropdown_mm48p4zs` — multi-select, labels Eng/Panel/Bench/PreFin/PostFin. Shop marks a station when fully done; the planner zeroes its remaining hours (board-done beats config `remainingHours` beats formula — `computeRemainingHours` in rebalance-schedule.js). When every formula>0 station is marked, `run-planner.js --plan` flips the job's Production Status to **Ready to Ship** (a derived, still-ACTIVE status — P&S/Delivery keep planning). Partial-station progress still uses config `remainingHours`.
+
 **Views:**
 - Build Vibe: id 250571534
 - Job Entry View: id 250596019

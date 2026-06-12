@@ -815,6 +815,68 @@ function makeFakeBoards() {
     check('failure surfaced loudly in console', /✗.*[Pp]ass 2|PLANNER ERROR|planner error/i.test(blob), blob.slice(-500));
   }
 
+  console.log('\nTest 16b: STATIONS-COMPLETE — derived Ready to Ship status flips qualifying jobs (dryRun-aware)');
+  {
+    // A job whose every formula>0 station is marked done on the board gets
+    // its PLB status flipped to 'Ready to Ship' during --plan. Jobs already
+    // Ready to Ship, inactive jobs, and partially-done jobs are untouched.
+    const mkBoards = () => {
+      const b = makeFakeBoards();
+      b.jobs = [
+        { id: 'PL-RTS', masterPmId: 'MPM-RTS', name: 'Ship Me', delivery: '2026-06-26', status: 'Finishing',
+          formulaHours: { eng: 4, panel: 8, bench: 0, prefin: 6, postfin: 5 },
+          stationsComplete: ['Eng', 'Panel', 'PreFin', 'PostFin'],
+          hours: { eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 } },
+        { id: 'PL-PART', masterPmId: 'MPM-PART', name: 'Partial', delivery: '2026-07-02', status: 'Scheduled',
+          formulaHours: { eng: 4, panel: 8, bench: 10, prefin: 0, postfin: 5 },
+          stationsComplete: ['Eng'],
+          hours: { eng: 0, panel: 8, bench: 10, prefin: 0, postfin: 5 } },
+        { id: 'PL-ALREADY', masterPmId: 'MPM-ALR', name: 'Already RTS', delivery: '2026-07-02', status: 'Ready to Ship',
+          formulaHours: { eng: 4, panel: 0, bench: 0, prefin: 0, postfin: 0 },
+          stationsComplete: ['Eng'],
+          hours: { eng: 0, panel: 0, bench: 0, prefin: 0, postfin: 0 } },
+      ];
+      return b;
+    };
+    const run = async (env) => {
+      const gqlCalls = [];
+      const stubGql = async (q, v) => { gqlCalls.push({ q, v }); return {}; };
+      let pass = 0;
+      const fakeFs = makeFakeFs();
+      const captured = [];
+      const realLog = console.log; console.log = (...a) => captured.push(a.join(' '));
+      const prevEnv = process.env.DRY_RUN;
+      if (env) process.env.DRY_RUN = '1'; else delete process.env.DRY_RUN;
+      try {
+        await runPlanner({ mode: 'plan', deps: {
+          loadAll: async () => mkBoards(),
+          runPlan: async () => (++pass, { mode: 'plan', placements: [], capacityGrid: {}, warnings: [] }),
+          validateAll: () => ({ accepted: [], conflicts: [] }),
+          writeRowDecisions: async () => ({ written: 0, skipped: 0, errors: [] }),
+          gqlFn: stubGql,
+          fs: fakeFs.fs, logsDir: '/fake/logs', now: () => new Date('2026-06-11T20:00:00Z'),
+        } });
+      } finally {
+        console.log = realLog;
+        if (prevEnv === undefined) delete process.env.DRY_RUN; else process.env.DRY_RUN = prevEnv;
+      }
+      return { gqlCalls, blob: captured.join('\n') };
+    };
+
+    const live = await run(false);
+    const statusFlips = live.gqlCalls.filter(c => /change_multiple_column_values/.test(c.q) && /Ready to Ship/.test(JSON.stringify(c.v)));
+    check('exactly one flip (PL-RTS only)', statusFlips.length === 1, JSON.stringify(live.gqlCalls.map(c => c.v)));
+    check('flip targets PL-RTS on the Production Load board',
+      String(statusFlips[0]?.v?.item) === 'PL-RTS' && String(statusFlips[0]?.v?.board) === '18407601557',
+      JSON.stringify(statusFlips[0]?.v));
+    check('console prints STATUS DERIVATION section', /=== STATUS DERIVATION ===/.test(live.blob), live.blob.slice(-400));
+
+    const dry = await run(true);
+    const dryFlips = dry.gqlCalls.filter(c => /change_multiple_column_values/.test(c.q) && /Ready to Ship/.test(JSON.stringify(c.v)));
+    check('DRY_RUN: no flip mutation', dryFlips.length === 0, JSON.stringify(dryFlips));
+    check('DRY_RUN: would-flip logged', /would set .*Ship Me.*Ready to Ship/i.test(dry.blob), dry.blob.slice(-400));
+  }
+
   console.log('\nTest 17: C8 — execute mode never touches writers or tuple derivation');
   {
     const stubs = makeOutputStubs();

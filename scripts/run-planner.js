@@ -225,9 +225,43 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   // Briefing still runs. runPlanner does not throw — the plan + validation
   // files are already saved, and the writers are re-runnable standalone.
   // ==========================================================================
+  // ==========================================================================
+  // Stations-Complete status derivation (2026-06-11): a job whose every
+  // formula>0 production station is marked done on the PLB flips to
+  // 'Ready to Ship' — production finished, job stays ACTIVE so P&S/Delivery
+  // keep planning (the Liz Stapp Complete-cliff fix). Idempotent: jobs
+  // already Ready to Ship (or any non-production status) are skipped.
+  // ==========================================================================
+  const _isReadyToShip = deps.isReadyToShip || reb.isReadyToShip;
+  const BOARD_PROD_LOAD = '18407601557';
+  const PL_STATUS_COL = 'color_mm26404x';
+  const rtsCandidates = (boards.jobs || []).filter(j =>
+    ['Not Started', 'Scheduled', 'Ready to Schedule', 'Finishing'].includes(j.status)
+    && _isReadyToShip(j.formulaHours, j.stationsComplete));
+  console.log('\n=== STATUS DERIVATION ===');
+  const statusDerivation = { flipped: [], dryRun: _dryRun };
+  if (rtsCandidates.length === 0) {
+    console.log('  no jobs newly ready-to-ship');
+  }
+  for (const j of rtsCandidates) {
+    if (_dryRun) {
+      console.log(`  [DRY RUN] would set ${j.name} → Ready to Ship (all production stations complete)`);
+      continue;
+    }
+    try {
+      await _gqlFn(
+        'mutation ($item: ID!, $board: ID!, $cv: JSON!) { change_multiple_column_values(item_id: $item, board_id: $board, column_values: $cv, create_labels_if_missing: true) { id } }',
+        { item: String(j.id), board: BOARD_PROD_LOAD, cv: JSON.stringify({ [PL_STATUS_COL]: { label: 'Ready to Ship' } }) });
+      statusDerivation.flipped.push(j.name);
+      console.log(`  ✓ ${j.name} → Ready to Ship (all production stations complete)`);
+    } catch (e) {
+      console.log(`  ✗ ${j.name} status flip failed: ${e.message} — re-runs next --plan`);
+    }
+  }
+
   const _writeCapacityView   = deps.writeCapacityView;
   const _writeWeeklyBriefing = deps.writeWeeklyBriefing;
-  const outputs = { acceptedTuples, capacityView: null, weeklyBriefing: null };
+  const outputs = { acceptedTuples, statusDerivation, capacityView: null, weeklyBriefing: null };
 
   if (!_writeCapacityView && !_writeWeeklyBriefing) {
     console.log('\n=== OUTPUTS === skipped (no writers wired — CLI entry provides them)');
