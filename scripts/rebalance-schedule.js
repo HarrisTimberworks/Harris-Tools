@@ -467,6 +467,32 @@ function getWeekList(startISO, endISO) {
 }
 
 // ============================================================================
+// Current-week truthfulness (2026-06-12): the ONLY place "what week is it"
+// is decided. LOCAL clock deliberately — Sat 18:00 MDT is Sun 00:00 UTC, and
+// the UTC-based startWeek made the Saturday auto-run plan into the week that
+// had just ended. The noon rule: today is a remaining workday only if the
+// run starts before 12:00 local.
+//   currentWeekMonday — Monday of the calendar week containing `now`
+//   effectiveWeek     — currentWeekMonday on Mon–Fri; NEXT Monday on Sat/Sun
+//   remainingWorkdays — 0..5 placeable days in the effective week
+//   isMidWeek         — effectiveWeek === currentWeekMonday
+// ============================================================================
+function nowContext(now = new Date()) {
+  const dow = now.getDay(); // local: 0=Sun..6=Sat
+  const localISO = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  monday.setDate(monday.getDate() + (dow === 0 ? -6 : 1 - dow));
+  const currentWeekMonday = localISO(monday);
+  if (dow === 0 || dow === 6) {
+    const next = new Date(monday); next.setDate(next.getDate() + 7);
+    return { currentWeekMonday, effectiveWeek: localISO(next), remainingWorkdays: 5, isMidWeek: false };
+  }
+  const remainingWorkdays = (5 - dow) + (now.getHours() < 12 ? 1 : 0);
+  return { currentWeekMonday, effectiveWeek: currentWeekMonday, remainingWorkdays, isMidWeek: true };
+}
+
+// ============================================================================
 // DATA LOADERS
 // ============================================================================
 
@@ -2354,6 +2380,7 @@ async function autoCreateCrewParents(missing, gqlFn, opts = {}) {
 // ============================================================================
 
 module.exports = {
+  nowContext,
   gql,
   loadAll,
   loadOverridesBoard,
