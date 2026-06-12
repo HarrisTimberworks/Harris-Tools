@@ -20,6 +20,8 @@ def test_catalog_merges_chests_and_library(make_chest, tmp_path):
         "category": "CASE & FF",
         "measurement": "SF",
         "layer": "CASE",
+        "color": "#0080FF",
+        "params": None,
         "raw_cost": 26.94,
         "status": "active",
     }
@@ -53,3 +55,14 @@ def test_catalog_no_dupes_is_empty_list(make_chest, tmp_path):
     out = tmp_path / "tool_catalog.json"
     data = catalog.build(tmp_path, [], out, version="v")
     assert data["duplicate_subjects"] == []
+
+
+def test_catalog_includes_asm_params(tmp_path):
+    from estimating import asm_chest
+    asm_chest.build(tmp_path)
+    out = tmp_path / "tool_catalog.json"
+    data = catalog.build(tmp_path, [], out, version="v")
+    by_subject = {t["subject"]: t for t in data["tools"]}
+    assert by_subject["ASM - Open Interior - EA"]["params"] == \
+        ["W", "H", "D", "SH"]
+    assert by_subject["ASM - Closet Run - EA"]["params"] == ["D", "P"]

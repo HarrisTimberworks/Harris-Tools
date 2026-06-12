@@ -10,6 +10,16 @@ from datetime import date
 from . import btx
 
 
+ASM_PARAMS = {
+    "ASM - Finished End (FF Flush) - EA": ["D", "H"],
+    "ASM - Finished End (FF FE) - EA": ["D", "H"],
+    "ASM - Finished End (Frameless) - EA": ["D", "H"],
+    "ASM - Open Interior - EA": ["W", "H", "D", "SH"],
+    "ASM - Glass Door Interior - EA": ["W", "H", "D", "SH"],
+    "ASM - Closet Run - EA": ["D", "P"],
+}
+
+
 def build(chest_dir, rows, out_path, version=None):
     lib = {r.subject: r for r in rows}
     tools = []
@@ -24,6 +34,8 @@ def build(chest_dir, rows, out_path, version=None):
                 "category": row.category if row else None,
                 "measurement": tool.unit,
                 "layer": tool.layer,
+                "color": tool.color,
+                "params": ASM_PARAMS.get(tool.subject),
                 "raw_cost": float(row.raw_cost) if row else None,
                 "status": row.status if row else "missing-from-library",
             })
