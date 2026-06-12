@@ -213,6 +213,49 @@ async function notifyChris(config, text, { gqlFn, userId = CHRIS_USER_ID }) {
   await gqlFn(q, { userId: String(userId), targetId: String(config.itemId), text });
 }
 
+// ---------------------------------------------------------------------------
+// Quote handling (Lead Time Calculator V2 — spec §4.3/§4.4)
+// ---------------------------------------------------------------------------
+const QUOTE_LABELS = { requested: 'Quote Requested', quoting: 'Quoting', quoted: 'Quoted', error: 'Quote Error' };
+// Quotes run 15-45 s; the 45-min planner staleness would wedge crashed quotes
+// (spec §4.3). 5 min ≈ 10× worst-case quote duration.
+const QUOTE_LOCK_STALE_MS = 5 * 60 * 1000;
+const DEFAULT_QUOTE_LOCK_FILE = path.join(__dirname, '..', 'logs', 'quote.lock');
+
+// One request per tick carrying BOTH the trigger status and the Quotes group
+// (spec §4.3: "combined single-request query"). Falls back to the original
+// single-item read until setup-quotes-group.js has written quotesGroupId.
+async function readTickState({ config, gqlFn }) {
+  if (!config.quotesGroupId) {
+    const readQ = 'query ($item: [ID!]) { items(ids: $item) { column_values { id text } } }';
+    const read = await gqlFn(readQ, { item: [String(config.itemId)] });
+    const statusText = (read?.items?.[0]?.column_values || []).find(c => c.id === config.statusColumnId)?.text || null;
+    return { statusText, quoteRows: [] };
+  }
+  const q = `query ($item: [ID!], $board: [ID!], $group: [String!]) {
+    items(ids: $item) { column_values { id text } }
+    boards(ids: $board) { groups(ids: $group) { items_page(limit: 50) { items { id name column_values { id text } } } } }
+  }`;
+  const read = await gqlFn(q, { item: [String(config.itemId)], board: [String(config.boardId)], group: [String(config.quotesGroupId)] });
+  const statusText = (read?.items?.[0]?.column_values || []).find(c => c.id === config.statusColumnId)?.text || null;
+  const items = read?.boards?.[0]?.groups?.[0]?.items_page?.items || [];
+  return { statusText, quoteRows: parseQuoteRows(items, config) };
+}
+
+function parseQuoteRows(items, config) {
+  const col = (item, id) => (item.column_values || []).find(c => c.id === id)?.text ?? '';
+  const c = config.quoteColumns || {};
+  return items.map(item => ({
+    rowId: String(item.id),
+    name: item.name,
+    jobType: col(item, c.jobType),
+    boxes: col(item, c.boxes),
+    complexity: col(item, c.complexity),
+    targetDate: col(item, c.targetDate) || null,
+    quoteStatus: col(item, c.status),
+  }));
+}
+
 // Orchestrator. mode: 'poll' (gated on Run Requested) | 'scheduled'
 // (unconditional). All I/O injectable via deps.
 async function runOnce({ mode = 'poll', deps = {} } = {}) {
@@ -237,9 +280,12 @@ async function runOnce({ mode = 'poll', deps = {} } = {}) {
   // (REVIEW FIX).
   let statusText = null;
   try {
-    const readQ = 'query ($item: [ID!]) { items(ids: $item) { column_values { id text } } }';
-    const read = await _gqlFn(readQ, { item: [String(config.itemId)] });
-    statusText = (read?.items?.[0]?.column_values || []).find(c => c.id === config.statusColumnId)?.text || null;
+    if (deps.tickState) {
+      statusText = deps.tickState.statusText;
+    } else {
+      const state = await readTickState({ config, gqlFn: _gqlFn });
+      statusText = state.statusText;
+    }
   } catch (e) {
     // AUDIT FIX (2026-06-11): token death previously looked identical to
     // healthy idle. Auth-shaped errors get a distinct flag so the CLI logs
@@ -383,6 +429,12 @@ module.exports = {
   buildRunSummary,
   shouldNotify,
   runOnce,
+  // Quote handling (Lead Time Calculator V2)
+  QUOTE_LABELS,
+  QUOTE_LOCK_STALE_MS,
+  DEFAULT_QUOTE_LOCK_FILE,
+  readTickState,
+  parseQuoteRows,
 };
 
 // ============================================================================
