@@ -1,0 +1,10 @@
+{
+  "preProductionWeeks": 2,
+  "minLeadWeeks": { "Res - Face Frame": 12, "Res - Frameless": 12, "Commercial": 10 },
+  "defaultFinishingDays": 5,
+  "referenceBasket": [
+    { "label": "Typical residential FF", "jobType": "Res - Face Frame", "boxes": 25, "complexity": 2 },
+    { "label": "Typical residential FL", "jobType": "Res - Frameless", "boxes": 25, "complexity": 2 },
+    { "label": "Typical commercial", "jobType": "Commercial", "boxes": 40, "complexity": 3 }
+  ]
+}

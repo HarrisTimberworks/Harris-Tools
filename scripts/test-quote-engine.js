@@ -17,5 +17,22 @@ check('BOB_START_DATE exported', reb.BOB_START_DATE === '2026-05-18', `got ${reb
 check('CREW_END_DATES exported', reb.CREW_END_DATES && typeof reb.CREW_END_DATES === 'object',
   `got ${JSON.stringify(reb.CREW_END_DATES)}`);
 
+console.log('Test 2: policy loads and lints');
+const { loadQuotePolicy, lintQuotePolicy } = require('./quote-engine.js');
+const policy = loadQuotePolicy();
+check('preProductionWeeks is 2', policy.preProductionWeeks === 2, `got ${policy.preProductionWeeks}`);
+check('minLeadWeeks keyed by ROUTING keys', policy.minLeadWeeks['Res - Face Frame'] === 12,
+  `got ${JSON.stringify(policy.minLeadWeeks)}`);
+check('referenceBasket has 3 entries', policy.referenceBasket.length === 3);
+
+console.log('Test 3: lint rejects bad shapes with named reasons');
+check('bad job-type key named', lintQuotePolicy({ preProductionWeeks: 2, minLeadWeeks: { 'Res FF': 12 },
+  defaultFinishingDays: 5, referenceBasket: [] }).some(e => e.includes('Res FF')),
+  'expected an error naming the non-ROUTING key');
+check('non-numeric weeks named', lintQuotePolicy({ preProductionWeeks: 'two', minLeadWeeks: {},
+  defaultFinishingDays: 5, referenceBasket: [] }).some(e => e.includes('preProductionWeeks')));
+check('clean policy lints clean', lintQuotePolicy(policy).length === 0,
+  JSON.stringify(lintQuotePolicy(policy)));
+
 console.log(failures.length ? `\n❌ ${failures.length}/${checks} FAILED` : `\n✅ all ${checks} checks passed`);
 process.exit(failures.length ? 1 : 0);
