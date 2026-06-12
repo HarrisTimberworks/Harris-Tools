@@ -1,2 +1,5 @@
 .token
 logs/
+__pycache__/
+.claude/*
+!.claude/settings.json
