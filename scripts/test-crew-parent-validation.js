@@ -179,6 +179,30 @@ function check(label, cond, detail) {
     check('returned 3 created records', created.length === 3, JSON.stringify(created));
   }
 
+  console.log('\nTest 6: AUDIT FIX — crewEndDates: departed crews need no parent rows from their end date');
+  {
+    // Ian departed 2026-06-11: without an end-date model, findMissingCrewParents
+    // demanded Ian rows for every horizon week (and --auto-create-parents would
+    // CREATE rows for a departed employee).
+    const missing = findMissingCrewParents({
+      crewParents: [{ crew: 'Ian', week: '2026-06-08', parentId: 'p1' }],
+      weeks: ['2026-06-08', '2026-06-15', '2026-06-22'],
+      crews: ['Ian'],
+      crewStartDates: {},
+      crewEndDates: { Ian: '2026-06-11' },
+    });
+    check('no Ian rows demanded on/after departure week', missing.length === 0, JSON.stringify(missing));
+
+    // A week BEFORE departure still requires a row.
+    const missing2 = findMissingCrewParents({
+      crewParents: [],
+      weeks: ['2026-06-01', '2026-06-15'],
+      crews: ['Ian'],
+      crewEndDates: { Ian: '2026-06-11' },
+    });
+    check('pre-departure week still required', missing2.length === 1 && missing2[0].week === '2026-06-01', JSON.stringify(missing2));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

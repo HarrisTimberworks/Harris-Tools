@@ -208,6 +208,12 @@ const CREW_BASE_HOURS = {
 // Bob doesn't start until this date (as an employee; pre-5/18 he's subcontract-only)
 const BOB_START_DATE = '2026-05-18';
 
+// AUDIT FIX (2026-06-12) — crew departure model, symmetric to start dates.
+// From a crew's end date: no parent rows demanded (or auto-created), zero
+// grid capacity, hard rule already blocks routing (hardRuleViolation).
+// Historical weeks before the end date stay fully valid.
+const CREW_END_DATES = { Ian: '2026-06-11' };
+
 // Soft capacity ceiling — allow 5% over before flagging as overload
 const SOFT_CAP_MULTIPLIER = 1.05;
 
@@ -736,6 +742,19 @@ function buildCapacityGrid(crewParents, timeOffList, weeks, existingSubs, active
     if (wk < BOB_START_DATE) {
       grid.Bob[wk].available = 0;
       grid.Bob[wk].base = 0;
+    }
+  }
+
+  // Departed crews carry zero capacity from their end date (their lingering
+  // parent rows on the board are inert — no phantom 40h/wk in the grid).
+  for (const [crew, endDate] of Object.entries(CREW_END_DATES)) {
+    if (!grid[crew]) continue;
+    for (const wk of weeks) {
+      if (wk >= endDate && grid[crew][wk]) {
+        grid[crew][wk].available = 0;
+        grid[crew][wk].base = 0;
+        grid[crew][wk].departed = true;
+      }
     }
   }
 
@@ -1721,6 +1740,7 @@ async function runPlan(boards, opts = {}) {
     crews: Object.keys(CREW_BASE_HOURS),
     subcontractorNames,
     crewStartDates: { Bob: BOB_START_DATE },
+    crewEndDates: CREW_END_DATES,
   });
   if (missingParents.length > 0) {
     if (AUTO_CREATE_PARENTS) {
@@ -2193,6 +2213,7 @@ function findMissingCrewParents({
   crews,
   subcontractorNames = new Set(),
   crewStartDates = {},
+  crewEndDates = {},
 }) {
   const present = new Set();
   for (const cp of crewParents) {
@@ -2202,8 +2223,10 @@ function findMissingCrewParents({
   for (const crew of crews) {
     if (subcontractorNames.has(crew)) continue;
     const startDate = crewStartDates[crew];
+    const endDate = crewEndDates[crew];
     for (const week of weeks) {
       if (startDate && week < startDate) continue;
+      if (endDate && week >= endDate) continue;  // departed — no row needed/created
       if (!present.has(`${crew}|${week}`)) {
         missing.push({ crew, week });
       }
