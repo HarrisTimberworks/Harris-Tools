@@ -85,7 +85,7 @@ The SCHEDULER uses this first. When multiple Primaries are listed, hours split e
 
 Used by the rebalancer when Primary is at/over capacity, or when Chris explicitly routes away from an overloaded Primary. Ordered by preference (first listed = most preferred Secondary).
 
-**Revised 2026-06-11 (Ian departed).** Secondary chains now uniform across subtypes except Ken's Commercial-only PostFin slot.
+**Revised 2026-06-11 (Ian departed); 2026-06-12: Paisios added to Bench secondary AHEAD of Jonathan (ramping up; keep Jonathan free for PM/Eng).** Chains uniform across subtypes except Ken's Commercial-only PostFin slot.
 
 ### Res - Face Frame
 
@@ -93,7 +93,7 @@ Used by the rebalancer when Primary is at/over capacity, or when Chris explicitl
 |---|---|
 | Engineering | Paisios, Jonathan |
 | Panel Processing | Bob |
-| Benchwork | Spencer, Jonathan |
+| Benchwork | Spencer, Paisios, Jonathan |
 | Pre Fin Cab Assembly | Bob |
 | Post Fin Cab Assembly | Paisios, Spencer |
 | Pack & Ship | Spencer, Bob, Jonathan |
@@ -105,7 +105,7 @@ Used by the rebalancer when Primary is at/over capacity, or when Chris explicitl
 |---|---|
 | Engineering | Paisios, Jonathan, Rob (fill only) |
 | Panel Processing | Bob |
-| Benchwork | Spencer, Jonathan |
+| Benchwork | Spencer, Paisios, Jonathan |
 | Pre Fin Cab Assembly | Bob |
 | Post Fin Cab Assembly | Paisios, Spencer |
 | Pack & Ship | Spencer, Bob, Jonathan |
@@ -117,7 +117,7 @@ Used by the rebalancer when Primary is at/over capacity, or when Chris explicitl
 |---|---|
 | Engineering | Chris (if load permits), Paisios |
 | Panel Processing | Bob |
-| Benchwork | Spencer, Jonathan |
+| Benchwork | Spencer, Paisios, Jonathan |
 | Pre Fin Cab Assembly | Bob |
 | Post Fin Cab Assembly | Paisios, Spencer, **Ken (commercial only)** |
 | Pack & Ship | Spencer, Bob, Jonathan |
@@ -129,7 +129,7 @@ Used by the rebalancer when Primary is at/over capacity, or when Chris explicitl
 |---|---|
 | Engineering | Chris (if load permits), Paisios |
 | Panel Processing | Bob (especially for edgebanding) |
-| Benchwork | Spencer, Jonathan (rare — most C/S jobs have no benchwork) |
+| Benchwork | Spencer, Paisios, Jonathan (rare — most C/S jobs have no benchwork) |
 | Pre Fin Cab Assembly | Bob |
 | Post Fin Cab Assembly | Paisios, Spencer |
 | Pack & Ship | Spencer, Bob, Jonathan |
@@ -141,7 +141,7 @@ Used by the rebalancer when Primary is at/over capacity, or when Chris explicitl
 |---|---|
 | Engineering | Jonathan, Paisios |
 | Panel Processing | Bob |
-| Benchwork | Spencer, Jonathan |
+| Benchwork | Spencer, Paisios, Jonathan |
 | Pre Fin Cab Assembly | Bob |
 | Post Fin Cab Assembly | Paisios, Spencer |
 | Pack & Ship | Spencer, Bob, Jonathan |
@@ -157,7 +157,7 @@ These are absolute — the scheduler must never route in violation:
 2. **Ken's Post Fin work is Commercial jobs ONLY.** Not residential.
 3. **Rob is remote PT, Engineering only.** Never schedule for shop-floor stations.
 4. **Bob is FILTERED OUT pre-2026-05-18** for employee-based scheduling. (Before that date he can only appear as a subcontractor entry in overrides.)
-5. **Paisios on Benchwork is LIMITED to light work** (small pieces, prep, assisting). Not a full bench replacement for Bob/Spencer.
+5. **Paisios is RAMPING UP on Benchwork (2026-06-12, per Chris)** — now a standard Secondary ahead of Jonathan. Pair him with Bob/Spencer on complex pieces during the ramp.
 6. **Ken on Pre Fin is emergency only.** Capability exists but disruptive to his Panel throughput — avoid unless Primary + Secondary all over cap.
 7. **Ian is DEPARTED (2026-06-11).** Hard rule in `hardRuleViolation` blocks any assignment to Ian for week ≥ 2026-06-11 — planner placement and board-override forces alike. Pre-departure historical records stay valid.
 
@@ -177,7 +177,7 @@ Detailed view of what each crew member can and can't do.
 ### Jonathan Korban (PM / Engineering Lead)
 
 - **Primary:** Engineering (Commercial, Countertop/Surface)
-- **Secondary:** Engineering (Res-FF, Res-FL, Mixed) as backup to Chris; Pack & Ship, Delivery
+- **Secondary:** Engineering (Res-FF, Res-FL, Mixed) as backup to Chris; Benchwork (third in chain: Bob > Spencer > Jonathan, per §3/§4 revised 2026-06-11); Pack & Ship, Delivery
 - **Skills beyond Engineering:** Capable of edgebanding (demonstrated via Cator Ruma weekend plan)
 - **Note:** Often covers PM/client work in parallel — treat the 40 hrs as planning ceiling, not floor
 
@@ -385,7 +385,24 @@ const SECONDARY = {
 
 ### `scripts/validate-cross-training.js`
 
-Uses a combined MATRIX with Primary / Secondary flags — if this doc changes, propagate there too.
+Synced 2026-06-11 (Ian departure). Uses a combined MATRIX with Primary / Secondary flags, collapsed to station level from §3/§4/§6 (Primary for any subtype wins over Secondary) — if this doc changes, propagate there too. Departures are week-gated via `DEPARTED`, matching the schedulers' hard rule: the validator reads each subitem's parent-row Week (`date_mm2kjth4`) and flags a departed crew "Not Trained" from the departure week forward, while pre-departure rows keep validating against the historical entry (which is why Ian's MATRIX entry is retained, not deleted). Covered by `scripts/test-validate-cross-training.js` (incl. Ian-gate parity with `rebalance-schedule.js` hardRuleViolation and ROUTING/SECONDARY cross-consistency sweeps).
+
+```javascript
+const MATRIX = {
+  Chris:    { Engineering: 'Primary' },
+  Jonathan: { Engineering: 'Primary', Benchwork: 'Secondary', 'Pack & Ship': 'Secondary', Delivery: 'Secondary' },
+  Paisios:  { Engineering: 'Secondary', Benchwork: 'Secondary', 'Post Fin Cab Assembly': 'Secondary', 'Pack & Ship': 'Primary', Delivery: 'Primary' },
+  Rob:      { Engineering: 'Secondary' },
+  Ian:      { Benchwork: 'Primary', 'Pre Fin Cab Assembly': 'Primary', 'Post Fin Cab Assembly': 'Primary', 'Pack & Ship': 'Secondary', Delivery: 'Secondary' },  // historical shape, week-gated by DEPARTED
+  Spencer:  { Benchwork: 'Primary', 'Pre Fin Cab Assembly': 'Primary', 'Post Fin Cab Assembly': 'Secondary', 'Pack & Ship': 'Secondary', Delivery: 'Secondary' },
+  Ken:      { 'Panel Processing': 'Primary', 'Pre Fin Cab Assembly': 'Secondary', 'Post Fin Cab Assembly': 'Secondary', 'Pack & Ship': 'Secondary', Delivery: 'Secondary' },  // PreFin/PostFin Commercial nuance lives in the schedulers' hard rules
+  Bob:      { 'Panel Processing': 'Secondary', Benchwork: 'Primary', 'Pre Fin Cab Assembly': 'Secondary', 'Post Fin Cab Assembly': 'Primary', 'Pack & Ship': 'Secondary', Delivery: 'Secondary' },
+};
+
+const DEPARTED = {
+  Ian: '2026-06-11',
+};
+```
 
 ---
 
@@ -403,6 +420,7 @@ Uses a combined MATRIX with Primary / Secondary flags — if this doc changes, p
 | 2026-04-24 | Removed Ken from PreFin Secondary lists for Res-FF, Res-FL, and Mixed | Internal inconsistency — Hard Rule #6 and Ken's profile both specify Commercial-only for PreFin, but the Secondary tables for non-Commercial subtypes incorrectly listed Ken as a fallback. Hard rule wins; tables now match. Updated SECONDARY object in source-code mirror to match. |
 | 2026-05-10 | Added Section 13 — System Reference (board + column IDs) | Phase 1 B1 — Manual Overrides board created (18413101550), need durable lookup for board/column/group/dropdown IDs that the planner read pipeline (B4+) will consume |
 | 2026-06-11 | Propagated Ian departure to `schedule-production-jobs.js` (ROUTING rewrite, week-gated hard rule, require.main guard + exports); refreshed §11 source mirrors to match live source | Commit 816c8ce updated `rebalance-schedule.js` and §1/§3–§5 here but missed the 15-min scheduler — any job flipped to "Ready to Schedule" would have created Crew Allocation subitems assigned to departed Ian. Covered by `scripts/test-scheduler-ian-departure.js` (incl. ROUTING + hard-rule parity sweep vs rebalancer). |
+| 2026-06-11 | Propagated Ian departure + revised chains to `validate-cross-training.js` (MATRIX reconciled to §3/§4/§6; Ian's entry retained but week-gated via new `DEPARTED` map reading the parent row's Week column; require.main guard + exports). Added Benchwork Secondary to Jonathan's §6 profile (§4 chains already listed him — doc-internal inconsistency). | MATRIX was stale post-816c8ce: a post-departure subitem assigned to Ian would flag "Primary" instead of surfacing as a mis-assignment, and a legit Jonathan bench row would flag "Not Trained". Reconciliation also caught drift beyond the two reported gaps: Paisios (Eng Primary→Secondary, PostFin Primary→Secondary, stale PreFin dropped), Bob (PreFin Primary→Secondary, Delivery added), Spencer (P&S/Delivery added), Jonathan (stale PreFin/PostFin dropped, P&S added). Covered by `scripts/test-validate-cross-training.js` (incl. Ian-gate parity with rebalancer hard rule + ROUTING/SECONDARY cross-consistency). |
 
 ---
 

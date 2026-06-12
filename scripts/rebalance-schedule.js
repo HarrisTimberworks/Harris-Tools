@@ -281,7 +281,7 @@ const ROUTING = {
 
 const SECONDARY = {
   'Res - Face Frame': {
-    'Benchwork':              ['Spencer', 'Jonathan'],
+    'Benchwork':              ['Spencer', 'Paisios', 'Jonathan'],  // Paisios ramping on bench (2026-06-12, ahead of Jonathan — keep Jonathan free)
     'Pre Fin Cab Assembly':   ['Bob'],  // Ken removed per matrix hard rule
     'Post Fin Cab Assembly':  ['Paisios', 'Spencer'],
     'Engineering':            ['Paisios', 'Jonathan'],
@@ -290,7 +290,7 @@ const SECONDARY = {
     'Delivery':               ['Spencer', 'Bob', 'Jonathan'],
   },
   'Res - Frameless': {
-    'Benchwork':              ['Spencer', 'Jonathan'],
+    'Benchwork':              ['Spencer', 'Paisios', 'Jonathan'],  // Paisios ramping on bench (2026-06-12, ahead of Jonathan — keep Jonathan free)
     'Pre Fin Cab Assembly':   ['Bob'],  // Ken removed per matrix hard rule
     'Post Fin Cab Assembly':  ['Paisios', 'Spencer'],
     'Panel Processing':       ['Bob'],
@@ -299,7 +299,7 @@ const SECONDARY = {
     'Delivery':               ['Spencer', 'Bob', 'Jonathan'],
   },
   'Commercial': {
-    'Benchwork':              ['Spencer', 'Jonathan'],
+    'Benchwork':              ['Spencer', 'Paisios', 'Jonathan'],  // Paisios ramping on bench (2026-06-12, ahead of Jonathan — keep Jonathan free)
     'Pre Fin Cab Assembly':   ['Bob'],
     'Post Fin Cab Assembly':  ['Paisios', 'Spencer', 'Ken'],  // Ken OK for commercial PostFin
     'Panel Processing':       ['Bob'],
@@ -307,7 +307,7 @@ const SECONDARY = {
     'Delivery':               ['Spencer', 'Bob', 'Jonathan'],
   },
   'Countertop/Surface': {
-    'Benchwork':              ['Spencer', 'Jonathan'],
+    'Benchwork':              ['Spencer', 'Paisios', 'Jonathan'],  // Paisios ramping on bench (2026-06-12, ahead of Jonathan — keep Jonathan free)
     'Pre Fin Cab Assembly':   ['Bob'],
     'Post Fin Cab Assembly':  ['Paisios', 'Spencer'],
     'Panel Processing':       ['Bob'],
@@ -315,7 +315,7 @@ const SECONDARY = {
     'Delivery':               ['Spencer', 'Bob', 'Jonathan'],
   },
   'Mixed': {
-    'Benchwork':              ['Spencer', 'Jonathan'],
+    'Benchwork':              ['Spencer', 'Paisios', 'Jonathan'],  // Paisios ramping on bench (2026-06-12, ahead of Jonathan — keep Jonathan free)
     'Pre Fin Cab Assembly':   ['Bob'],  // Ken removed per matrix hard rule
     'Post Fin Cab Assembly':  ['Paisios', 'Spencer'],
     'Engineering':            ['Paisios', 'Jonathan'],

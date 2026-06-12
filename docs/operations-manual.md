@@ -61,6 +61,8 @@ One row = "move N hours of (job × station) from (crew × week) to (crew × week
 3. Leave Status = **Pending**. Add a one-line **Reason**.
 4. Request a run (2.2) or deploy (2.3).
 
+> ⚠️ **The #1 trap:** "Run Requested" / "Deploy Requested" go on the **▶️ Planner Trigger item only**. Those labels appear as options on override rows too (shared column) — but a row set to anything other than **Pending** is *invisible to the planner*. Row statuses are only ever: Pending (yours) → Applied / Conflict (the planner's).
+
 The run flips the row to **Applied** (it's in the plan — look for 🔧 on the Capacity View) or **Conflict** (reason written into the Conflict Reason column).
 
 **To retry a Conflict:** fix the row, set Status back to **Pending**, request a run.
@@ -145,7 +147,7 @@ Routing chains, start dates (`BOB_START_DATE`), departures (`CREW_END_DATES`) li
 | A doc looks half-empty | A doc-write failed mid-replace | The full markdown is saved in `logs\` — re-run, or paste the artifact via monday UI. |
 | Numbers look wrong everywhere | Check the trigger updates for config-lint errors; check Stations Complete ticks vs reality | Chris. |
 
-**Never:** hand-edit Crew Allocation subitems for active jobs (a deploy overwrites them — use override rows instead); edit the generated docs; edit PLB window columns (display-only); set non-Monday weeks anywhere.
+**Never:** hand-edit Crew Allocation subitems for active jobs (a deploy overwrites them — use override rows instead); edit the generated docs; edit PLB window columns (display-only); set non-Monday weeks anywhere; put "Run/Deploy Requested" on an override **row** (trigger item only — a non-Pending row is skipped silently).
 
 ---
 

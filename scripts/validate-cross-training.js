@@ -40,13 +40,13 @@ const MATRIX = {
   Chris:    { Engineering: 'Primary' },
   Jonathan: {
     Engineering:           'Primary',
-    Benchwork:             'Secondary',  // bench chain: Bob > Spencer > Jonathan
+    Benchwork:             'Secondary',  // bench chain: Bob > Spencer > Paisios > Jonathan
     'Pack & Ship':         'Secondary',
     Delivery:              'Secondary',
   },
   Paisios: {
     Engineering:            'Secondary', // in training, backup to Chris
-    Benchwork:              'Secondary', // light work only (hard rule 5)
+    Benchwork:              'Secondary', // ramping up on bench (2026-06-12) — ahead of Jonathan in the chain
     'Post Fin Cab Assembly':'Secondary',
     'Pack & Ship':          'Primary',
     Delivery:               'Primary',
