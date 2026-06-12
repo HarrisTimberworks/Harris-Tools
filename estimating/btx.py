@@ -95,6 +95,11 @@ def _check_pdf_text(value: str, what: str):
     if "(" in value or ")" in value or "\\" in value:
         raise ValueError(
             f"{what} {value!r} contains PDF-string delimiters")
+    try:
+        value.encode("latin-1")
+    except UnicodeEncodeError:
+        raise ValueError(
+            f"{what} {value!r} contains non-latin-1 characters")
 
 
 def set_preset_unit_cost(tool: Tool, value: str):
@@ -118,6 +123,9 @@ def set_layer(tool: Tool, layer: str):
         tool.raw = OC_RE.sub(lambda m: f"/OC({layer})", tool.raw, count=1)
     else:
         idx = tool.raw.rstrip().rfind(">>")
+        if idx == -1:
+            raise ValueError(
+                f"{tool.subject}: raw has no '>>' close; cannot insert /OC")
         tool.raw = tool.raw[:idx] + f"/OC({layer})" + tool.raw[idx:]
     tool.layer = layer
     _reencode(tool)

@@ -106,3 +106,27 @@ def test_rename_subject_rejects_delimiters(make_chest):
     ts = btx.read_toolset(p)
     with pytest.raises(ValueError, match="delimiters"):
         btx.rename_subject(ts.tools[0], "BAD(NAME)")
+
+
+def test_set_layer_inserts_before_nested_dict_tail(make_chest, tmp_path):
+    # production tools end in /BS<</W 0/Type/Border/S/S>>>> — insertion
+    # must land before the OUTER close, not inside the nested /BS dict
+    p = make_chest("X", [{"subject": "A", "unit": "EA", "uc": "1.00"}])
+    ts = btx.read_toolset(p)
+    ts.tools[0].raw = ts.tools[0].raw.rstrip()[:-2] + \
+        "/BS<</W 0/Type/Border/S/S>>>>"
+    btx._reencode(ts.tools[0])
+    btx.set_layer(ts.tools[0], "CASE")
+    out = tmp_path / "o.btx"
+    btx.write_toolset(ts, out)
+    t2 = btx.read_toolset(out).tools[0]
+    assert t2.layer == "CASE"
+    assert t2.subject == "A"
+    assert t2.preset_unit_cost == "1.00"
+
+
+def test_rename_subject_rejects_non_latin1(make_chest):
+    p = make_chest("X", [{"subject": "A", "unit": "EA", "uc": "1.00"}])
+    ts = btx.read_toolset(p)
+    with pytest.raises(ValueError, match="non-latin-1"):
+        btx.rename_subject(ts.tools[0], "Smart“Quote”")
