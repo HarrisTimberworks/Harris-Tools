@@ -43,7 +43,11 @@
       "mcp__ef63d889-2e57-4f35-9d83-80d73e62b53e__read_docs",
       "mcp__ef63d889-2e57-4f35-9d83-80d73e62b53e__search",
       "mcp__ef63d889-2e57-4f35-9d83-80d73e62b53e__list_automations",
-      "mcp__claude_ai_monday_com__get_board_items_page"
+      "mcp__claude_ai_monday_com__get_board_items_page",
+      "Bash(node scripts/diff-plans.js *)",
+      "Bash(env -u MONDAY_API_TOKEN -u DRY_RUN node scripts/test-* *)",
+      "PowerShell(node scripts/test-* *)",
+      "PowerShell(node scripts\\test-* *)"
     ]
   }
 }
