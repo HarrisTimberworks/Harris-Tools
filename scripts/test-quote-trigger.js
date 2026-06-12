@@ -225,6 +225,51 @@ console.log('Test 1: readTickState — ONE request carrying trigger status + quo
     check('intended writebacks printed', logged.some(l => /DRY RUN.*Quoted/i.test(l)), logged.join(' | ').slice(0, 200));
   }
 
+  console.log('Test 11: setup — creates group + columns + persists config when absent');
+  const { setupQuotesGroup } = require('./setup-quotes-group.js');
+  {
+    const calls = [];
+    const gqlFn = async (q, vars) => {
+      calls.push({ q, vars });
+      if (q.includes('groups {')) return { boards: [{ groups: [{ id: 'group_mm47eq7n', title: '⚙️ Control' }] }] }; // no Quotes group yet
+      if (q.includes('create_group')) return { create_group: { id: 'group_q1' } };
+      if (q.includes('create_column')) return { create_column: { id: `col_${calls.length}` } };
+      return {};
+    };
+    const writes = [];
+    const fsImpl = { readFileSync: () => JSON.stringify({ boardId: '18413101550', groupId: 'g', itemId: 'i', statusColumnId: 's' }),
+      writeFileSync: (p, c) => writes.push({ p, c }), existsSync: () => true };
+    const res = await setupQuotesGroup({ gqlFn, fsImpl });
+    check('group created', res.created === true && res.quotesGroupId === 'group_q1', JSON.stringify(res));
+    check('7 columns created', calls.filter(c => c.q.includes('create_column')).length === 7);
+    check('config written with quotesGroupId + quoteColumns', writes.length === 1
+      && writes[0].c.includes('quotesGroupId') && writes[0].c.includes('quoteColumns'));
+  }
+
+  console.log('Test 12: setup — idempotent when group already exists (duplicate guard)');
+  {
+    const calls = [];
+    const gqlFn = async (q) => {
+      calls.push(q);
+      if (q.includes('groups {')) return { boards: [{ groups: [{ id: 'group_q1', title: '💬 Quotes' }] }] };
+      return {};
+    };
+    const fsImpl = { readFileSync: () => JSON.stringify({ boardId: '18413101550', groupId: 'g', itemId: 'i', statusColumnId: 's', quotesGroupId: 'group_q1', quoteColumns: { jobType: 'x' } }),
+      writeFileSync: () => { throw new Error('must not rewrite config'); }, existsSync: () => true };
+    const res = await setupQuotesGroup({ gqlFn, fsImpl });
+    check('no creation', res.created === false && !calls.some(q => q.includes('create_group')));
+  }
+
+  console.log('Test 13: setup — transient query failure does NOT create (briefing-doc bug family)');
+  {
+    let threw = false;
+    try {
+      await setupQuotesGroup({ gqlFn: async () => { throw new Error('502'); },
+        fsImpl: { readFileSync: () => JSON.stringify({ boardId: 'b' }), writeFileSync: () => {}, existsSync: () => true } });
+    } catch (e) { threw = true; }
+    check('throws instead of creating on read failure', threw);
+  }
+
   console.log(failures.length ? `\n❌ ${failures.length}/${checks} FAILED` : `\n✅ all ${checks} checks passed`);
   process.exit(failures.length ? 1 : 0);
 })();
