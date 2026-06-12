@@ -91,6 +91,8 @@ Canonical finish unit: **1-sided-equivalent SF**. The finisher's 2-sided rate is
 
 **Finished ends:** labor = existing FF FinEnd count factors (Flush vs FF FE variants); finish SF = D × H, 1-sided.
 
+**Frameless finished ends (confirmed by Chris 2026-06-12):** no labor component at all — a finished end on a frameless cabinet goes through the same shop process as an unfinished one; the marker expands to finish SF only (D × H, 1-sided, at the job's finish factor).
+
 **FF FE expansion (confirmed by Chris 2026-06-12):** the FF FE case is a finished end built as a faux face frame with a faux door. The marker expands to TWO components: (1) the FF FE labor factor (EA), and (2) SF pricing of a door-sized panel whose dimensions are the cabinet side minus 1.5" (the faux frame reveal) all the way around — i.e. (depth − 3") × (height − 3"). No geometry exists to trace; the panel is computed, same mechanism as closet loose panels. Per the legacy `*Add Door Sf` practice, the panel prices at the job's door-style SF factor — confirm the door-factor linkage rule (which door style when a room has several) during rulebook coding.
 
 **Loose panels / closets:** `ASM - Closet Run` marker carries a panel schedule (count × dims) read from elevation + plan; expands to panel material SF + finish SF per sidedness rules. Exact panel/finish interaction to confirm with the estimator during rulebook coding.
