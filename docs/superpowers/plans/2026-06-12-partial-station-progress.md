@@ -39,11 +39,11 @@ Live-board op, additive only (approved in spec §Board changes). No code, no com
 
 | station | column id |
 |---|---|
-| eng | _(fill in)_ |
-| panel | _(fill in)_ |
-| bench | _(fill in)_ |
-| prefin | _(fill in)_ |
-| postfin | _(fill in)_ |
+| eng | numeric_mm48nt96 |
+| panel | numeric_mm48k3hx |
+| bench | numeric_mm48wd7g |
+| prefin | numeric_mm48tc2s |
+| postfin | numeric_mm483bra |
 
 - [ ] **Step 3: Commit the plan-file id update**
 
