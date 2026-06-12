@@ -1,3 +1,5 @@
+import pytest
+
 from estimating import btx, drift, library, sync
 
 
@@ -26,3 +28,23 @@ def test_sync_skips_retired_and_unknown(make_chest, tmp_path):
                               "", "", "")]
     changed = sync.sync_presets(tmp_path, rows)
     assert changed == []
+
+
+def test_sync_failure_carries_verified_changes(make_chest, tmp_path,
+                                               monkeypatch):
+    make_chest("HTW-R 01 AAA", [{"subject": "A", "unit": "EA",
+                                 "uc": "1.00"}])
+    make_chest("HTW-R 02 BBB", [{"subject": "B", "unit": "EA",
+                                 "uc": "2.00"}])
+    real_write = btx.write_toolset
+
+    def flaky_write(ts, path):
+        if "BBB" in str(path):
+            return   # simulate lost write: file on disk keeps old value
+        real_write(ts, path)
+
+    monkeypatch.setattr(btx, "write_toolset", flaky_write)
+    with pytest.raises(sync.SyncVerifyError) as exc:
+        sync.sync_presets(tmp_path, [_row("A", 9.00), _row("B", 8.00)])
+    assert exc.value.verified_changes == [("A", "1.00", "9.00")]
+    assert "BBB" in str(exc.value.failed_path)

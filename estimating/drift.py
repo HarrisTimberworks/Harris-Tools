@@ -5,9 +5,6 @@ from dataclasses import dataclass, field
 
 from . import btx
 
-CHEST_GLOB = "HTW-[RC] [0-9][0-9] *.btx"
-
-
 @dataclass
 class DriftReport:
     price_mismatches: list = field(default_factory=list)   # (subj, tool, lib)
@@ -24,7 +21,7 @@ def check(chest_dir, rows) -> DriftReport:
     lib = {r.subject: r for r in rows}
     report = DriftReport()
     seen = set()
-    pattern = os.path.join(str(chest_dir), CHEST_GLOB)
+    pattern = os.path.join(str(chest_dir), btx.CHEST_GLOB)
     for path in sorted(glob.glob(pattern)):
         for tool in btx.read_toolset(path).tools:
             seen.add(tool.subject)

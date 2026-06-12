@@ -5,13 +5,12 @@ import re
 
 from . import btx, library
 
-CHEST_GLOB = "HTW-[RC] [0-9][0-9] *.btx"
 CATEGORY_RE = re.compile(r"^HTW-[RC] \d\d (.+)$")
 
 
 def harvest_chests(chest_dir, *, line, source_date):
     rows = []
-    pattern = os.path.join(str(chest_dir), CHEST_GLOB)
+    pattern = os.path.join(str(chest_dir), btx.CHEST_GLOB)
     for path in sorted(glob.glob(pattern)):
         try:
             ts = btx.read_toolset(path)

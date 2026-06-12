@@ -1,4 +1,5 @@
 """Read/write Bluebeam .btx tool sets (current 6-column HTW schema)."""
+import os
 import re
 import xml.etree.ElementTree as ET
 import zlib
@@ -8,6 +9,8 @@ SUBJ_RE = re.compile(r'/Subj\(((?:[^()\\]|\\.)*)\)')
 COL_RE = re.compile(r'/BSIColumnData\[((?:\((?:[^()\\]|\\.)*\))*)\]')
 TOKEN_RE = re.compile(r'\((?:[^()\\]|\\.)*\)')
 OC_RE = re.compile(r'/OC\(((?:[^()\\]|\\.)*)\)')
+
+CHEST_GLOB = "HTW-[RC] [0-9][0-9] *.btx"
 
 UNIT_BY_TYPE = {
     "Bluebeam.PDF.Annotations.AnnotationMeasurePolylength": "LF",
@@ -89,7 +92,11 @@ def set_preset_unit_cost(tool: Tool, value: str):
 
 
 def write_toolset(ts: ToolSet, path):
+    """Atomic in-place write: temp file + os.replace, so a crash mid-write
+    cannot leave a truncated .btx."""
     xml_bytes = ET.tostring(ts._tree.getroot(), encoding="utf-8",
                             xml_declaration=True)
-    with open(path, "wb") as f:
+    tmp = str(path) + ".tmp"
+    with open(tmp, "wb") as f:
         f.write(b"\xef\xbb\xbf" + xml_bytes)
+    os.replace(tmp, str(path))
