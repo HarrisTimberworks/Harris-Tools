@@ -130,6 +130,39 @@ function parseHrsLeftCell(text) {
   return t === '' ? null : parseFloat(t.replace(/,/g, ''));
 }
 
+// Run-summary warnings for the ⏳ Hrs Left columns (spec 2026-06-12).
+// Summary-only: never blocks the run, never triggers a notification.
+const PROGRESS_WARN_STATUSES = new Set([
+  'Not Started', 'Ready to Schedule', 'Scheduled', 'Finishing', 'Ready to Ship',
+]);
+const STATION_KEY_TO_LABEL = Object.freeze(
+  Object.fromEntries(Object.entries(STATION_LABEL_TO_KEY).map(([l, k]) => [k, l])));
+
+function shopProgressWarnings(jobs) {
+  const warnings = [];
+  for (const j of jobs || []) {
+    if (!PROGRESS_WARN_STATUSES.has(j.status)) continue;
+    const done = new Set((j.stationsComplete || []).map(l => STATION_LABEL_TO_KEY[l]).filter(Boolean));
+    const hl = j.hrsLeft || {};
+    for (const k of STATION_HOUR_KEYS) {
+      const v = hl[k];
+      if (v === null || v === undefined) continue;
+      const label = STATION_KEY_TO_LABEL[k];
+      const f = Number((j.formulaHours || {})[k] || 0);
+      if (!isValidHrsLeft(v)) {
+        warnings.push(`${j.name} ${label}: invalid ⏳ Hrs Left (${v}) ignored — using config/formula`);
+      } else if (done.has(k) && v > 0) {
+        warnings.push(`${j.name} ${label}: ticked complete but ⏳ Hrs Left is ${v} — tick wins (0 hrs); clear the cell or untick`);
+      } else if (!done.has(k) && v === 0) {
+        warnings.push(`${j.name} ${label}: ⏳ Hrs Left is 0 but station not ticked — tick ✅ Stations Complete if truly done`);
+      } else if (v > f + 1e-9) {
+        warnings.push(`${j.name} ${label}: ⏳ Hrs Left ${v} exceeds formula ${f} — overrun or change order pending (info)`);
+      }
+    }
+  }
+  return warnings;
+}
+
 // True when EVERY station with formula hours > 0 is marked done. Drives the
 // derived "Ready to Ship" status in run-planner.js: production is finished
 // but the job stays ACTIVE so P&S/Delivery keep planning (the Liz Stapp
@@ -2320,6 +2353,7 @@ module.exports = {
   computeRemainingHours,
   isValidHrsLeft,
   parseHrsLeftCell,
+  shopProgressWarnings,
   isReadyToShip,
   STATION_LABEL_TO_KEY,
   // Audit fixes (2026-06-11).

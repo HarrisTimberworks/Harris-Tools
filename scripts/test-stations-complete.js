@@ -24,6 +24,7 @@ const {
   isReadyToShip,
   isValidHrsLeft,
   parseHrsLeftCell,
+  shopProgressWarnings,
   STATION_LABEL_TO_KEY,
 } = require('./rebalance-schedule.js');
 
@@ -154,6 +155,35 @@ const FORMULA = { eng: 8.6, panel: 19.5, bench: 2.3, prefin: 0, postfin: 13.5 };
       && isValidHrsLeft(0) && isValidHrsLeft(2.3), '');
     check('isValidHrsLeft rejects strings and Infinity (type-strict gate)',
       !isValidHrsLeft('5') && !isValidHrsLeft(Infinity) && !isValidHrsLeft(parseHrsLeftCell('Infinity')), '');
+  }
+
+  console.log('\nTest 11: shopProgressWarnings — nudges, contradictions, overrun info');
+  {
+    const F = { eng: 4, panel: 8, bench: 10, prefin: 0, postfin: 5 };
+    const empty = { eng: null, panel: null, bench: null, prefin: null, postfin: null };
+    const jobs = [
+      { name: 'NudgeJob', status: 'Scheduled', formulaHours: F,
+        stationsComplete: [], hrsLeft: { ...empty, panel: 0 } },
+      { name: 'ContraJob', status: 'Finishing', formulaHours: F,
+        stationsComplete: ['Bench'], hrsLeft: { ...empty, bench: 6 } },
+      { name: 'OverrunJob', status: 'Not Started', formulaHours: F,
+        stationsComplete: [], hrsLeft: { ...empty, panel: 30 } },
+      { name: 'InvalidJob', status: 'Scheduled', formulaHours: F,
+        stationsComplete: [], hrsLeft: { ...empty, eng: -2 } },
+      { name: 'CompleteJob', status: 'Complete', formulaHours: F,
+        stationsComplete: [], hrsLeft: { ...empty, panel: 0 } },
+      { name: 'QuietJob', status: 'Scheduled', formulaHours: F,
+        stationsComplete: [], hrsLeft: { ...empty, panel: 5 } },
+    ];
+    const w = shopProgressWarnings(jobs);
+    check('tick nudge fired', w.some(x => /NudgeJob Panel: .*0 but station not ticked/.test(x)), JSON.stringify(w));
+    check('contradiction fired (tick wins)', w.some(x => /ContraJob Bench: ticked complete but/.test(x)), JSON.stringify(w));
+    check('overrun info fired', w.some(x => /OverrunJob Panel: .*30 exceeds formula 8/.test(x)), JSON.stringify(w));
+    check('invalid value fired', w.some(x => /InvalidJob Eng: invalid/.test(x)), JSON.stringify(w));
+    check('Complete jobs skipped', !w.some(x => /CompleteJob/.test(x)), JSON.stringify(w));
+    check('healthy partial entry silent (5 < formula 8)', !w.some(x => /QuietJob/.test(x)), JSON.stringify(w));
+    check('exactly 4 warnings', w.length === 4, JSON.stringify(w));
+    check('null/empty jobs safe', Array.isArray(shopProgressWarnings(null)) && shopProgressWarnings([]).length === 0, '');
   }
 
   console.log();
