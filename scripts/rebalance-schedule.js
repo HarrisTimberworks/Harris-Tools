@@ -83,6 +83,13 @@ const COL_PL = {
   // labels Eng/Panel/Bench/PreFin/PostFin). Board-done beats config beats
   // formula; see computeRemainingHours.
   stationsComplete: 'dropdown_mm48p4zs',
+  // 2026-06-12 — shop-floor partial progress (⏳ Hrs Left, numbers columns).
+  // Empty cell = no info; see computeRemainingHours precedence.
+  hrsLeftEng: 'numeric_mm48nt96',
+  hrsLeftPanel: 'numeric_mm48k3hx',
+  hrsLeftBench: 'numeric_mm48wd7g',
+  hrsLeftPrefin: 'numeric_mm48tc2s',
+  hrsLeftPostfin: 'numeric_mm483bra',
 };
 
 // ============================================================================
@@ -507,12 +514,23 @@ async function loadJobs(gqlFn = gql) {
     const stationsComplete = (cv[COL_PL.stationsComplete]?.text || '')
       .split(',').map(s => s.trim()).filter(Boolean);
 
-    const hours = computeRemainingHours(formulaHours, override.remainingHours || null, stationsComplete);
+    // ⏳ Hrs Left (2026-06-12): shop-floor remaining-hours estimate per
+    // station. Empty cell → null (falls through to config/formula).
+    const hrsLeft = {
+      eng: parseHrsLeftCell(cv[COL_PL.hrsLeftEng]?.text),
+      panel: parseHrsLeftCell(cv[COL_PL.hrsLeftPanel]?.text),
+      bench: parseHrsLeftCell(cv[COL_PL.hrsLeftBench]?.text),
+      prefin: parseHrsLeftCell(cv[COL_PL.hrsLeftPrefin]?.text),
+      postfin: parseHrsLeftCell(cv[COL_PL.hrsLeftPostfin]?.text),
+    };
+
+    const hours = computeRemainingHours(formulaHours, override.remainingHours || null, stationsComplete, hrsLeft);
 
     return {
       id: it.id,
       name: it.name,
       stationsComplete,
+      hrsLeft,
       status: cv[COL_PL.status]?.text || 'Not Started',
       subtype: cv[COL_PL.subtype]?.text || 'Commercial',
       delivery: cv[COL_PL.delivery]?.display_value || null,
