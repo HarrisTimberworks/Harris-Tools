@@ -14,7 +14,15 @@ CATALOG = (r"G:\Shared drives\Harris Timberworks\BlueBeam Templates & Config"
 
 
 def main():
+    import os
     today = date.today().isoformat()
+    if os.path.exists(LIB):
+        print(f"REFUSING: {LIB} already exists.\n"
+              f"The factor library is canonical — re-seeding would wipe "
+              f"estimator edits and the changelog.\n"
+              f"To intentionally re-seed, archive/rename the existing file "
+              f"first.")
+        sys.exit(2)
     library.create_library(LIB)
     rows = harvest.harvest_to_library(CHESTS, LIB, line="R",
                                       source_date=today)

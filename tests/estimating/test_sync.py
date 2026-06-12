@@ -30,6 +30,36 @@ def test_sync_skips_retired_and_unknown(make_chest, tmp_path):
     assert changed == []
 
 
+def test_sync_skips_provisional_rows(make_chest, tmp_path):
+    p = make_chest("HTW-R 01 AAA", [{"subject": "A", "unit": "EA",
+                                     "uc": None}])
+    rows = [library.FactorRow("A", "R", "X", "EA", 0.0, "provisional",
+                              "", "", "")]
+    assert sync.sync_presets(tmp_path, rows) == []
+    assert btx.read_toolset(p).tools[0].preset_unit_cost is None
+
+
+def test_sync_reread_failure_raises_sync_verify_error(make_chest, tmp_path,
+                                                      monkeypatch):
+    import pytest
+    make_chest("HTW-R 01 AAA", [{"subject": "A", "unit": "EA",
+                                 "uc": "1.00"}])
+    real_read = btx.read_toolset
+    calls = {"n": 0}
+
+    def flaky_read(path):
+        calls["n"] += 1
+        if calls["n"] > 1:          # first read OK, verify re-read fails
+            raise ValueError("corrupt")
+        return real_read(path)
+
+    monkeypatch.setattr(btx, "read_toolset", flaky_read)
+    with pytest.raises(sync.SyncVerifyError) as exc:
+        sync.sync_presets(tmp_path, [_row("A", 9.00)])
+    assert exc.value.verified_changes == []
+    assert "AAA" in str(exc.value.failed_path)
+
+
 def test_sync_failure_carries_verified_changes(make_chest, tmp_path,
                                                monkeypatch):
     make_chest("HTW-R 01 AAA", [{"subject": "A", "unit": "EA",

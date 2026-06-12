@@ -21,13 +21,13 @@ class SyncVerifyError(RuntimeError):
 def sync_presets(chest_dir, rows):
     """Returns list of (subject, old, new) actually changed and verified.
 
-    Skips retired rows and tools not in the library. Verification scope:
-    every tool in this chest whose subject is in the (non-retired) library
-    is re-read after writing; tools not in the library are neither modified
-    nor verified. On verification failure raises SyncVerifyError carrying
-    the changes already verified in earlier files."""
+    Skips provisional and retired rows and tools not in the library.
+    Verification scope: every tool in this chest whose subject is in the
+    active library is re-read after writing; tools not in the library are
+    neither modified nor verified. On verification failure raises
+    SyncVerifyError carrying the changes already verified in earlier files."""
     rates = {r.subject: f"{float(r.raw_cost):.2f}"
-             for r in rows if r.status != "retired"}
+             for r in rows if r.status == "active"}
     verified = []
     pattern = os.path.join(str(chest_dir), btx.CHEST_GLOB)
     for path in sorted(glob.glob(pattern)):
@@ -43,7 +43,13 @@ def sync_presets(chest_dir, rows):
         if not file_changes:
             continue
         btx.write_toolset(ts, path)
-        for tool in btx.read_toolset(path).tools:
+        try:
+            verify_ts = btx.read_toolset(path)
+        except Exception as e:
+            raise SyncVerifyError(
+                f"post-write re-read failed for {path}: {e}",
+                verified_changes=verified, failed_path=path) from e
+        for tool in verify_ts.tools:
             expected = rates.get(tool.subject)
             if expected is not None and tool.preset_unit_cost != expected:
                 raise SyncVerifyError(
