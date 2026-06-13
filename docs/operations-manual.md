@@ -16,7 +16,7 @@ You mostly *feed it facts*; it does the rest.
 | Every Saturday 6:00 PM | Full planning run — fresh plan, fresh 📊 Capacity View, fresh 📋 Weekly Briefing for Monday morning. Boards are NOT rewritten (plan-only). |
 | Daily 6:00 AM | Rollups: Time Off hours, Command Center non-production hours, cross-training audit. |
 | Daily 8:15 AM | Manual Overrides board housekeeping: override rows whose week has passed are moved to the Stale group (never-run Pending rows are auto-Cleared). |
-| On every planning run | Override rows are validated and stamped Applied/Conflict; jobs with all stations done flip to **Ready to Ship**; new **Ready to Schedule** jobs that got planned flip to **Scheduled**; both output docs regenerate; the trigger item gets a run-summary update. |
+| On every planning run | Override rows are validated and stamped Applied/Conflict; jobs with all stations done flip to **Ready to Ship**; new **Ready to Schedule** jobs that got planned flip to **Scheduled**; both output docs regenerate; the trigger item gets a run-summary update; ⏳ shop-floor progress notes land in the run summary. |
 | Every minute | The same poll also answers 💬 Quote rows: any quote at **Quote Requested** is computed against live shop load and answered on the row (~1–2 min; up to 3 per minute). |
 | On every planning run | Current dealer lead-times artifacts regenerate (`logs/lead-times.json` + HTML snippet) from the reference basket in `config/quote-policy.json`. |
 | When something needs a human | Chris gets a monday notification: override conflicts, planner errors, doc-write failures, config errors, a skipped Saturday run, or any deploy. Clean runs are silent. |
@@ -29,14 +29,25 @@ You mostly *feed it facts*; it does the rest.
 
 ### 2.1 Mark production progress (anyone, ~10 seconds)
 
-When a station's work on a job is **fully done**:
+**Fully done station:**
 
 1. Open the **Production Load Board** → find the job.
 2. In **✅ Stations Complete**, tick the station (Eng / Panel / Bench / PreFin / PostFin).
 
 The next planning run zeroes that station's remaining hours. When every station with work is ticked, the job flips itself to **Ready to Ship** (delivery work keeps planning until the truck leaves).
 
-> Partially done ("27 of 55 boxes") is NOT a tick — that goes through Chris (§4.2).
+**Partially done** ("27 of 55 boxes", "most of the bench work happened"):
+
+1. Open the **Production Load Board** → **Shop Floor** view → find the job.
+2. Type your estimate of the hours still needed into that station's **⏳ Hrs Left** column.
+
+The next planning run schedules from your number instead of the estimate/config. Rules of thumb:
+
+- Update whenever reality drifts from the plan — weekly is plenty.
+- Job running over the estimate? Enter the bigger number — the schedule absorbs it.
+- **0 means nothing left.** If the station is truly done, tick ✅ Stations Complete instead of typing 0.
+- Clearing the cell hands the station back to the estimate/config.
+- Window slips ("bench didn't happen this week") are still override rows (§2.4) or Chris (§4.2) — ⏳ changes how much work is left, not when it lands.
 
 ### 2.2 Get a fresh plan + fresh docs (anyone)
 
@@ -133,7 +144,7 @@ node scripts/setup-trigger-item.js        # recreate the trigger item if ever lo
 
 ### 4.2 Config (`config/rebalance-overrides.json`) — commit immediately after every edit
 
-- `jobOverrides[id].remainingHours` — partial-station progress (the "27 of 55 boxes" cases). Board ticks beat config; config beats formulas.
+- `jobOverrides[id].remainingHours` — **legacy** partial-progress (pre-⏳). Still honored where the board's ⏳ cell is blank. Precedence: board ticks > board ⏳ Hrs Left > config > formula. ⚠️ Never delete individual station keys (the planner reads the object whole — a missing key means 0, not "use formula"); delete a job's whole object at completion or not at all. New partial progress belongs on the board (§2.1).
 - `jobOverrides[id].customWindow` — force a station's week range (starts must be Mondays).
 - `forceAssignments` — pin crew/job/**stations (array!)**/week/hours.
 - `crewCapacityOverrides[week][crew]` — reduced hours, holidays, weekend boosts.
