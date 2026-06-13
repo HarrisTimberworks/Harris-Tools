@@ -96,3 +96,34 @@ def test_intake_dedupes_repeated_subject():
               {"subject": "X - A - EA", "measurement": 2, "unit": "EA"}]
     rows = importer.intake_rows(intake, line="C", source_date="2026-06-12")
     assert len(rows) == 1
+
+
+def test_write_line_items_xlsx(tmp_path):
+    import openpyxl
+    r = importer.process_markups(
+        [_m("CASE-COMM - Base PLam - LF", 12.5, "LF")], FACTORS, JOB)
+    out = tmp_path / "takeoff_lines.xlsx"
+    importer.write_line_items(r, out, job=JOB,
+                              source="Test Job", source_date="2026-06-12")
+    wb = openpyxl.load_workbook(out)
+    assert "Line Items" in wb.sheetnames
+    ws = wb["Line Items"]
+    headers = [c.value for c in ws[1]]
+    assert headers == ["Component", "Subject", "Unit", "Qty",
+                       "Raw Unit $", "Raw Total $"]
+    vals = [r2[5] for r2 in ws.iter_rows(min_row=2, values_only=True)
+            if r2[5] is not None]
+    assert 2625.0 in vals
+
+
+def test_write_includes_intake_and_warnings_sheets(tmp_path):
+    import openpyxl
+    r = importer.process_markups([
+        _m("CUSTOM - Mystery - EA", 2, "EA"),
+        _m("CASE-COMM - Base PLam - LF", 1, "LF", status="Proposed"),
+    ], FACTORS, JOB)
+    out = tmp_path / "t.xlsx"
+    importer.write_line_items(r, out, job=JOB, source="J", source_date="d")
+    wb = openpyxl.load_workbook(out)
+    assert "Intake (needs pricing)" in wb.sheetnames
+    assert "Warnings" in wb.sheetnames

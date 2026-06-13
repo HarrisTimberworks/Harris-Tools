@@ -68,3 +68,46 @@ def intake_rows(intake, *, line, source_date):
             source_date=source_date,
             notes="auto-captured from a takeoff markup - needs pricing"))
     return rows
+
+
+def write_line_items(result, out_path, *, job, source, source_date):
+    """Write the import result to an xlsx: Line Items (+ grand total),
+    Intake, Warnings, and a small Job header."""
+    import openpyxl
+    from openpyxl.styles import Font
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Line Items"
+    ws.append(["Component", "Subject", "Unit", "Qty", "Raw Unit $",
+               "Raw Total $"])
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    total = 0.0
+    for li in result.line_items:
+        ws.append([li.component, li.subject, li.unit, li.qty, li.raw_unit,
+                   li.raw_total])
+        total += li.raw_total
+    ws.append(["", "", "", "", "GRAND TOTAL (raw)", round(total, 2)])
+    ws[ws.max_row][4].font = Font(bold=True)
+    ws[ws.max_row][5].font = Font(bold=True)
+
+    wi = wb.create_sheet("Intake (needs pricing)")
+    wi.append(["Subject", "Measurement", "Unit"])
+    for c in wi[1]:
+        c.font = Font(bold=True)
+    for rec in result.intake:
+        wi.append([rec["subject"], rec.get("measurement"), rec.get("unit")])
+
+    ww = wb.create_sheet("Warnings")
+    ww.append(["Warning"])
+    ww[1][0].font = Font(bold=True)
+    for w in result.warnings:
+        ww.append([w])
+
+    wj = wb.create_sheet("Job", 0)
+    for k, v in [("Source", source), ("Date", source_date),
+                 ("Finish", job.get("finish_subject")),
+                 ("Door", job.get("door_subject")),
+                 ("Panel", job.get("panel_subject"))]:
+        wj.append([k, v])
+    wb.save(out_path)
