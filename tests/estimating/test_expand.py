@@ -168,3 +168,31 @@ def test_glass_equals_open():
     b = expand.expand_marker("ASM - Glass Door Interior - EA",
                              "W=36 H=84 D=24 SH=3", FACTORS, JOB)
     assert a[0].raw_total == b[0].raw_total
+
+
+def test_expand_job_loads_factors_and_validates_config(tmp_path):
+    from estimating import library
+    lib = tmp_path / "lib.xlsx"
+    library.create_library(lib)
+    library.write_factors(lib, [
+        library.FactorRow("FIN - Stain (1 Sided)", "R", "FINISH", "SF",
+                          2.0, "active", "", "", ""),
+    ])
+    markers = [("ASM - Open Interior - EA", "W=36 H=84 D=24 SH=3")]
+    job = {"finish_subject": "FIN - Stain (1 Sided)",
+           "door_subject": "X", "panel_subject": "Y"}
+    items, errors = expand.expand_job(lib, markers, job)
+    assert errors == []
+    assert items[0].raw_total == pytest.approx(194.0)
+
+
+def test_expand_job_reports_missing_factor_not_crash(tmp_path):
+    from estimating import library
+    lib = tmp_path / "lib.xlsx"
+    library.create_library(lib)
+    markers = [("ASM - Open Interior - EA", "W=1 H=1 D=1 SH=0")]
+    job = {"finish_subject": "FIN - Stain (1 Sided)",
+           "door_subject": "X", "panel_subject": "Y"}
+    items, errors = expand.expand_job(lib, markers, job)
+    assert items == []
+    assert len(errors) == 1 and "FIN - Stain (1 Sided)" in errors[0]

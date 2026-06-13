@@ -159,3 +159,19 @@ def expand_marker(subject, params_str, factors, job):
     if fn is None:
         raise ValueError(f"no expander for subject {subject!r}")
     return fn(parse_params(params_str), factors, job)
+
+
+def expand_job(lib_path, markers, job):
+    """Load the live factor library and expand a list of (subject, params).
+    Returns (line_items, errors). A marker whose factor is missing or whose
+    params are malformed produces an error string and is skipped — never
+    crashes the batch."""
+    from . import library
+    factors = {r.subject: r.raw_cost for r in library.load_factors(lib_path)}
+    items, errors = [], []
+    for subject, params_str in markers:
+        try:
+            items.extend(expand_marker(subject, params_str, factors, job))
+        except (KeyError, ValueError) as e:
+            errors.append(f"{subject} [{params_str}]: {e}")
+    return items, errors
