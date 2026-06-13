@@ -49,3 +49,22 @@ def process_markups(markups, factors, job, *, require_verified=True):
                                "measurement": m.get("measurement"),
                                "unit": m.get("unit")})
     return res
+
+
+def intake_rows(intake, *, line, source_date):
+    """Turn unknown-subject intake records into provisional FactorRows
+    (raw_cost 0.0, status provisional) for later promotion. Deduped by
+    subject."""
+    from .library import FactorRow
+    seen, rows = set(), []
+    for rec in intake:
+        s = rec["subject"]
+        if s in seen:
+            continue
+        seen.add(s)
+        rows.append(FactorRow(
+            subject=s, line=line, category="INTAKE", unit=rec.get("unit") or "EA",
+            raw_cost=0.0, status="provisional", source="markup intake",
+            source_date=source_date,
+            notes="auto-captured from a takeoff markup - needs pricing"))
+    return rows

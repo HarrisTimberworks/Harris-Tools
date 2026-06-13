@@ -73,3 +73,26 @@ def test_expand_failure_becomes_warning_not_crash():
         {}, JOB)
     assert r.line_items == []
     assert any("Open Interior" in w for w in r.warnings)
+
+
+def test_intake_rows_are_provisional_factorrows():
+    from estimating import library
+    intake = [{"subject": "CUSTOM - New Thing - EA", "measurement": 4,
+               "unit": "EA"}]
+    rows = importer.intake_rows(intake, line="C", source_date="2026-06-12")
+    assert len(rows) == 1
+    r = rows[0]
+    assert isinstance(r, library.FactorRow)
+    assert r.subject == "CUSTOM - New Thing - EA"
+    assert r.line == "C"
+    assert r.status == "provisional"
+    assert r.raw_cost == 0.0
+    assert r.unit == "EA"
+    assert "intake" in r.source.lower()
+
+
+def test_intake_dedupes_repeated_subject():
+    intake = [{"subject": "X - A - EA", "measurement": 1, "unit": "EA"},
+              {"subject": "X - A - EA", "measurement": 2, "unit": "EA"}]
+    rows = importer.intake_rows(intake, line="C", source_date="2026-06-12")
+    assert len(rows) == 1
