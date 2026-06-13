@@ -1,7 +1,7 @@
 # Partial-Station Progress Entry — Design Spec
 
 **Date:** 2026-06-12
-**Status:** Approved by Chris 2026-06-12 (decisions D1–D5 below). Build not started.
+**Status:** LIVE — built, backfilled, and verified in production 2026-06-12 (build record at bottom).
 **Owner system:** HTW production scheduling (Phases 1–3 LIVE on `main` — this is additive; nothing retired gets rebuilt).
 
 ## Problem
@@ -72,3 +72,21 @@ Copy config per-station remaining values into the new board columns for **active
 - **Station window slips** (the BCH "bench didn't get done" half of the 6/12 incident) — timing problems stay Chris/override-row territory; the `computeWindows` past-window clamp remains a backlog item. This feature only absorbs the remaining-hours half.
 - Units→hours derivation columns, auto-ticking, the intake→Scheduled derivation, override-row schema, Crew Allocation writes. (Ready-to-Ship gets exactly one change — the required-set extension in §Code 3 — nothing else.)
 - monday-side automation/validation on the new columns (revisit only if bad entries actually happen).
+
+## Build record — 2026-06-12 (subagent-driven, same-day session as the design)
+
+All 14 plan tasks landed; executed via subagent-driven development with two-stage (spec + quality) review per task.
+
+**Board surface (live, board 18407601557):** five `numbers` columns — `numeric_mm48nt96` (⏳ Eng), `numeric_mm48k3hx` (⏳ Panel), `numeric_mm48wd7g` (⏳ Bench), `numeric_mm48tc2s` (⏳ PreFin), `numeric_mm483bra` (⏳ PostFin) — plus table view **"Shop Floor" id 263823058** (Name + ✅ Stations Complete + the five ⏳ columns; filtered to Not Started / Ready to Schedule / Scheduled / Finishing). monday's view-name storage drops 4-byte emoji (🔧 → `?`), so the view ships without the wrench; reference it by id.
+
+**Commits (in order):** `1682685` column ids → `550e022` computeRemainingHours ⏳ tier + isValidHrsLeft → `9e04e09` isReadyToShip required-set extension → `cd291f0` parseHrsLeftCell (+ empty-required-set comment fix) → `1142ca1` shopProgressWarnings → `bfe203b` PATCH-5 pin-vs-remaining anchor (+ message accuracy, priority fixtures) → `4373a28` loadJobs wiring → `afeed11` run-planner wiring + RTS 3rd arg → `a7adf57` trigger summary block → `8f5af9b` review riders → `140d2a9` ops manual.
+
+**§Code 4 resolution:** PATCH-5 already handled pin-exceeds-remaining (warn `exceeds remaining job budget`, placements stand, budget clamps, no throw) — anchored in test-force-unplaced-accounting.js Test 4 rather than newly built.
+
+**Review findings fixed en route:** stale test-file header doc; "All-zero formulas → false" comment overturned by the ⏳ extension (now "empty required set → false", with ⏳-only-required-set checks); invalid-value message tail inaccurate under tick+invalid; branch-priority unpinned (Infinity fixture is the true invalid-beats-contradiction discriminator); planError-path `progressWarnings` presence anchored by forced execution.
+
+**Suite:** 32 files green at landing (grew from 28 mid-build — parallel sessions added quote/lead-times suites the same day; both features verified coexisting in afeed11's review).
+
+**Backfill (executed after Chris's approval of the 14-write table):** 14 ⏳ writes across 6 active jobs (Westridge PostFin 8.6; McMorris Panel 2.4 / PreFin 32.9 / PostFin 37; SciTech Panel 8 / Bench 2.3; BCH Panel 4 / Bench 40; Atom Panel 4 / Bench 0.5 / PostFin 3.1; R5-P2 Panel 22 / Bench 102 / PostFin 16). Zero ticks needed — every config-0/formula>0 station was already ticked live. Verification: loader re-read exact match → DRY_RUN showed exactly one progress note (BCH Bench 40 > formula 36, the known intentional overrun) → `diff-plans.js` pre/post placements **identical** (board values shadow equal config values) → live trigger run (121s) posted `Shop-floor progress: 1 note(s)` in the run summary, docs regenerated, no deploy. Config `remainingHours` objects left intact (shadowed) per spec — delete whole-object at job completion only.
+
+**Standing cosmetics:** the BCH overrun note reprints each run until its Bench is ticked (working as designed); view-name wrench emoji unsupported.
