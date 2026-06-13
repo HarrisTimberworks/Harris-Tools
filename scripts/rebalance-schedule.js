@@ -1793,6 +1793,9 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
 //                          tempdir for isolation + per-test assertions)
 async function runPlan(boards, opts = {}) {
   const { jobs, crewParents, timeOff, existingSubs, overrideRows = [] } = boards;
+  // Current-week truthfulness (2026-06-12): single source of truth for what week
+  // this plan covers. Tests inject a fixed nowContext; live runs call the real clock.
+  const ctx = opts.nowContext || nowContext();
 
   console.log(`Loaded: ${jobs.length} jobs, ${crewParents.length} crew-week parents, ${timeOff.length} time off entries, ${existingSubs.length} existing subitems, ${overrideRows.length} active override row(s)`);
 
@@ -1854,8 +1857,8 @@ async function runPlan(boards, opts = {}) {
   // Planning window: this week through 4 weeks past the last delivery (or 12 weeks out, whichever is further).
   // A1: dynamic horizon — replaces previously hardcoded `'2026-07-27'`. Removes the manual maintenance burden
   // of bumping endWeek every time a job has a far-future delivery (Atom Computing 8/08 forced the last edit).
-  const today = new Date();
-  const startWeek = toISO(getMondayOfWeek(today));
+  const today = new Date();  // keep for horizon floor (addDays(today, 84))
+  const startWeek = ctx.effectiveWeek;
 
   const deliveryDates = activeJobs.map(j => j.delivery).filter(Boolean);
   const maxDelivery = deliveryDates.length > 0
@@ -1919,6 +1922,8 @@ async function runPlan(boards, opts = {}) {
 
   const allPlacements = [];
   const warnings = [];
+  const windowClamps = [];  // Current-week truthfulness (2026-06-12): per-job clamp records
+  let unplacedTotal = 0;    // accumulated unplaced hours across all stations/jobs
   // A3: per-job finishing-cycle rows + skip count for the validation report
   const finishingCycleRows = [];
   let finishingCycleSkipped = 0;
@@ -1939,11 +1944,22 @@ async function runPlan(boards, opts = {}) {
       finishingCycleSkipped++;
       continue;
     }
-    const windows = computeWindows(job);
+    let windows;
+    try {
+      windows = computeWindows(job, { effectiveWeek: ctx.effectiveWeek });
+    } catch (e) {
+      warnings.push(`Could not compute windows for ${job.name}: ${e.message}`);
+      finishingCycleSkipped++;
+      continue;
+    }
     if (!windows) {
       warnings.push(`Could not compute windows for ${job.name}`);
       finishingCycleSkipped++;
       continue;
+    }
+    // Collect per-job clamp records
+    for (const c of windows.clamps || []) {
+      windowClamps.push({ jobId: job.id, jobName: job.name, ...c });
     }
 
     // A5: build PL-board finish-date writeback for this job (dates or nulls).
@@ -1952,7 +1968,7 @@ async function runPlan(boards, opts = {}) {
     // A3: build finishing-cycle row (or count skip) for this job
     const fcRow = buildFinishingCycleRow(job, windows);
     if (fcRow.kind === 'row') {
-      finishingCycleRows.push({
+      const rowEntry = {
         jobId: fcRow.jobId,
         jobName: fcRow.jobName,
         finishingDays: fcRow.finishingDays,
@@ -1963,7 +1979,14 @@ async function runPlan(boards, opts = {}) {
         gap: fcRow.gap,
         valid: fcRow.valid,
         errors: fcRow.errors,
-      });
+      };
+      // If window clamping produced an invalid finishing cycle, annotate the row
+      if ((windows.clamps || []).length > 0 && !fcRow.valid) {
+        const clampNote = windows.clamps.map(c => `${c.station} ${c.computedStart}→${c.clampedStart}`).join(', ');
+        rowEntry.errors = [...(rowEntry.errors || []), `window clamped: ${clampNote}`];
+        rowEntry.clamped = true;
+      }
+      finishingCycleRows.push(rowEntry);
     } else {
       finishingCycleSkipped++;
     }
@@ -1981,6 +2004,7 @@ async function runPlan(boards, opts = {}) {
       const result = scheduleStation(grid, job, s.name, s.hours, s.win.start, s.win.end);
       allPlacements.push(...result.placements);
       for (const w of result.warnings || []) warnings.push(w);
+      unplacedTotal += result.unplaced;
       if (result.unplaced > 0) {
         let msg = `${job.name} / ${s.name}: ${result.unplaced} hrs could not be placed within window ${s.win.start} → ${s.win.end}`;
         if (result.rejections && result.rejections.size > 0) {
@@ -2019,6 +2043,9 @@ async function runPlan(boards, opts = {}) {
     jobsScheduled: activeJobs.length,
     totalPlacements: allPlacements.length,
     warnings,
+    windowClamps,                                            // Current-week truthfulness (2026-06-12)
+    nowContext: ctx,                                         // effective week + remaining workdays
+    unplacedTotal: Number(unplacedTotal.toFixed(2)),         // aggregate unplaced hours
     capacityGrid: {},
     placements: allPlacements,
     finishingCycleReport,
