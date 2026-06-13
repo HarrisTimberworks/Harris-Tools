@@ -65,6 +65,8 @@ One row = "move N hours of (job × station) from (crew × week) to (crew × week
 
 > ⚠️ **The #1 trap:** "Run Requested" / "Deploy Requested" go on the **▶️ Planner Trigger item only**. Those labels appear as options on override rows too (shared column) — but a row set to anything other than **Pending** is *invisible to the planner*. Row statuses are only ever: Pending (yours) → Applied / Conflict (the planner's).
 
+> ⚠️ **The #2 trap — pins are floors, not transfers.** A move row *guarantees the destination gets those hours*; it does NOT subtract from the source. After honoring every pin, the planner re-flows all unpinned hours down the routing chain (Primary first) against capacity — so the source crew often just refills. To genuinely pull hours OFF a Primary, pin a big enough total elsewhere that less remains to refill them with (e.g., to take 4h of a 40h station off Bob when Spencer already auto-carries 4: pin Spencer at **8**, not 4). And you usually don't need an offsetting second row — freed capacity backfills by itself through normal routing. Validation is also per-row: it can't see that two of your rows offset each other, so a row that's fine "in combination" may still need **Allow Over-Cap**.
+
 The run flips the row to **Applied** (it's in the plan — look for 🔧 on the Capacity View) or **Conflict** (reason written into the Conflict Reason column).
 
 **To retry a Conflict:** fix the row, set Status back to **Pending**, request a run.
