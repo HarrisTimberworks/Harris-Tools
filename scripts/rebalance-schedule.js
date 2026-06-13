@@ -777,7 +777,7 @@ async function loadAll({ gqlFn = gql } = {}) {
 // CAPACITY MODEL
 // ============================================================================
 
-function buildCapacityGrid(crewParents, timeOffList, weeks, existingSubs, activeJobMasterPmIds) {
+function buildCapacityGrid(crewParents, timeOffList, weeks, existingSubs, activeJobMasterPmIds, ctx = null) {
   // grid[crew][week] = { parentId, base, timeOff, available, committed, assignments }
   const grid = {};
   for (const crew of Object.keys(CREW_BASE_HOURS)) {
@@ -888,6 +888,22 @@ function buildCapacityGrid(crewParents, timeOffList, weeks, existingSubs, active
         slot.available += override.weekendHours;
         slot.weekendBoost = override.weekendHours;
         slot.weekendReason = override.reason;
+      }
+    }
+  }
+
+  // Day-weighted current week (2026-06-12): physical bound on NEW work.
+  // min(available, dailyBase × remainingDays). Explicit operator overrides and
+  // subcontractor pools are exempt — see overrideReason/weekendBoost handling.
+  if (ctx && ctx.isMidWeek) {
+    for (const crew of Object.keys(grid)) {
+      const slot = grid[crew][ctx.currentWeekMonday];
+      if (!slot || slot.subcontractor) continue;
+      if (slot.overrideReason !== undefined) {
+        slot.placeable = slot.available;            // explicit operator number wins verbatim
+      } else {
+        slot.placeable = Math.min(slot.available, (slot.base / 5) * ctx.remainingWorkdays);
+        if (slot.weekendBoost) slot.placeable += slot.weekendBoost;  // deliberate weekend capacity survives weighting
       }
     }
   }
@@ -1253,8 +1269,14 @@ function applyForceAssignments(grid, job, station, week, weekHours) {
       continue;
     }
     const wouldBe = slot.committed + hrs;
-    if (wouldBe > slot.available * SOFT_CAP_MULTIPLIER) {
-      warnings.push(`forceAssignment exceeds cap: ${force.crew} ${week} would be ${wouldBe.toFixed(1)}/${slot.available} (over by ${(wouldBe - slot.available).toFixed(1)} hrs) — placing anyway per user override`);
+    const forceSoftCap = slot.available * SOFT_CAP_MULTIPLIER;
+    const dayWeightedNote = slot.placeable !== undefined && wouldBe > slot.placeable
+      ? ` (day-weighted: ${slot.placeable}h placeable)`
+      : '';
+    if (wouldBe > forceSoftCap) {
+      warnings.push(`forceAssignment exceeds cap: ${force.crew} ${week} would be ${wouldBe.toFixed(1)}/${slot.available} (over by ${(wouldBe - slot.available).toFixed(1)} hrs) — placing anyway per user override${dayWeightedNote}`);
+    } else if (dayWeightedNote) {
+      warnings.push(`forceAssignment exceeds day-weighted cap: ${force.crew} ${week} would be ${wouldBe.toFixed(1)} vs ${slot.placeable}h placeable${dayWeightedNote} — placing anyway per user override`);
     }
     slot.committed = wouldBe;
     slot.assignments.push({ job: job.name, station, hours: hrs, forced: true });
@@ -1622,7 +1644,8 @@ function allocateStationWeek(grid, job, station, week, hours, candidates) {
     } else if (!slot.parentId) {
       continue;  // regular crew with no allocation parent row → skip
     }
-    const softCap = slot.available * SOFT_CAP_MULTIPLIER;
+    let softCap = slot.available * SOFT_CAP_MULTIPLIER;
+    if (slot.placeable !== undefined) softCap = Math.min(softCap, slot.placeable); // physical bound — no 5% grace
     const room = Math.max(0, softCap - slot.committed);
     if (room <= 0) continue;
     const toPlace = Math.min(remaining, room);
@@ -1738,8 +1761,10 @@ function scheduleStation(grid, job, station, hours, windowStart, windowEnd) {
       if (!grid[c]?.[wk]?.parentId || grid[c][wk].available <= 0) return false;
       if (hardRuleViolation(c, station, job.subtype, wk)) return false;
       if (jobExclusionViolation(c, job.id, station, wk)) return false;
-      const softCap = grid[c][wk].available * SOFT_CAP_MULTIPLIER;
-      if (grid[c][wk].committed >= softCap) return false;
+      const slot = grid[c][wk];
+      let softCap = slot.available * SOFT_CAP_MULTIPLIER;
+      if (slot.placeable !== undefined) softCap = Math.min(softCap, slot.placeable); // physical bound
+      if (slot.committed >= softCap) return false;
       return true;
     });
 
@@ -1918,7 +1943,7 @@ async function runPlan(boards, opts = {}) {
 
   // Build set of Master PM IDs for active jobs (their subitems will be deleted/rescheduled)
   const activeJobMasterPmIds = new Set(activeJobs.map(j => j.masterPmId).filter(Boolean));
-  const grid = buildCapacityGrid(crewParents, timeOff, weeks, existingSubs, activeJobMasterPmIds);
+  const grid = buildCapacityGrid(crewParents, timeOff, weeks, existingSubs, activeJobMasterPmIds, ctx);
 
   const allPlacements = [];
   const warnings = [];
@@ -2076,6 +2101,7 @@ async function runPlan(boards, opts = {}) {
           over: slot.committed > slot.available * SOFT_CAP_MULTIPLIER
             ? Number((slot.committed - slot.available).toFixed(2))
             : 0,
+          ...(slot.placeable !== undefined ? { placeableAvail: Number(slot.placeable.toFixed(2)) } : {}),
           assignments: slot.assignments.map(a => ({
             job: a.job,
             station: a.station,
@@ -2504,6 +2530,7 @@ module.exports = {
   buildFinishDateMutations,
   scheduleStation,
   allocateStationWeek,
+  buildCapacityGrid,
   SOFT_CAP_MULTIPLIER,
   // Quote engine (Lead Time Calculator V2) — synthetic crew-parent injection
   // needs the same capacity constants the planner uses; exporting beats
