@@ -530,6 +530,158 @@ function baseDeps(gql, fakeFs, runPlannerFn) {
     check('dryRun: not marked deployed', !r2.deployed, JSON.stringify(r2));
   }
 
+  // ==========================================================================
+  // Task 9: buildRunSummary — window clamps + plan warnings + unplaced
+  // ==========================================================================
+
+  console.log('\nTest 29: summary renders window clamps + plan warnings (capped at 15) + unplaced');
+  {
+    const result = {
+      validation: { accepted: [], conflicts: [] },
+      finalPlan: {
+        placements: [],
+        unplacedTotal: 12.5,
+        windowClamps: [{ jobName: 'MAG - BCH', station: 'bench', computedStart: '2026-06-08', computedEnd: '2026-06-12', clampedStart: '2026-06-15', clampedEnd: '2026-06-19', entirelyPast: true }],
+        warnings: Array.from({ length: 20 }, (_, i) => `warning ${i}`),
+        finishingCycleReport: { rows: [], invalidCount: 0 },
+      },
+    };
+    const s = buildRunSummary(result, { mode: 'poll' });
+    check('clamp section header present', s.includes('⏰ Window clamps: 1'), s);
+    check('clamp line details (entirely past)', s.includes('MAG - BCH / bench: 2026-06-08→2026-06-15 (entirely past)'), s);
+    check('warnings header present', s.includes('⚠️ Plan warnings: 20'), s);
+    check('warning 14 present (index 14 of 20)', s.includes('warning 14'), s);
+    check('warning 15 absent (capped)', !s.includes('warning 15'), s.slice(-300));
+    check('+5 more line present', s.includes('+5 more'), s);
+    check('unplaced line present', s.includes('🚨 UNPLACED: 12.5'), s);
+  }
+
+  console.log('\nTest 30: clean run (no clamps/warnings/unplaced) renders none of those sections');
+  {
+    const result = {
+      validation: { accepted: [], conflicts: [] },
+      finalPlan: {
+        placements: [{}],
+        unplacedTotal: 0,
+        windowClamps: [],
+        warnings: [],
+        finishingCycleReport: { rows: [], invalidCount: 0 },
+      },
+    };
+    const s = buildRunSummary(result, { mode: 'poll' });
+    check('no clamp section on clean run', !s.includes('⏰ Window clamps'), s);
+    check('no warnings section on clean run', !s.includes('⚠️ Plan warnings'), s);
+    check('no unplaced section on clean run', !s.includes('🚨 UNPLACED'), s);
+  }
+
+  console.log('\nTest 31: clamps but no unplaced — clamps section present, no unplaced section');
+  {
+    const result = {
+      validation: { accepted: [], conflicts: [] },
+      finalPlan: {
+        placements: [{}],
+        unplacedTotal: 0,
+        windowClamps: [{ jobName: 'R5', station: 'panel', computedStart: '2026-06-01', computedEnd: '2026-06-05', clampedStart: '2026-06-08', clampedEnd: '2026-06-12', entirelyPast: true }],
+        warnings: [],
+        finishingCycleReport: { rows: [], invalidCount: 0 },
+      },
+    };
+    const s = buildRunSummary(result, { mode: 'poll' });
+    check('clamp section present', s.includes('⏰ Window clamps: 1'), s);
+    check('no unplaced section (unplacedTotal=0)', !s.includes('🚨 UNPLACED'), s);
+  }
+
+  console.log('\nTest 32: shouldNotify on unplacedTotal > 0');
+  {
+    const r = {
+      validation: { accepted: [], conflicts: [] },
+      finalPlan: {
+        placements: [],
+        unplacedTotal: 8,
+        windowClamps: [],
+        warnings: [],
+        finishingCycleReport: { rows: [], invalidCount: 0 },
+      },
+    };
+    const n = shouldNotify(r);
+    check('notify === true when unplacedTotal > 0', n.notify === true, JSON.stringify(n));
+    check('reason mentions unplaced hour(s)', n.reasons.some(r => /unplaced/i.test(r)), JSON.stringify(n.reasons));
+  }
+
+  console.log('\nTest 33: shouldNotify on clamp-induced invalid FCV row (row.clamped && !row.valid)');
+  {
+    const r = {
+      validation: { accepted: [], conflicts: [] },
+      finalPlan: {
+        placements: [],
+        unplacedTotal: 0,
+        windowClamps: [],
+        warnings: [],
+        finishingCycleReport: {
+          rows: [
+            { clamped: true, valid: false, jobName: 'TestJob', errors: ['window clamped'] },
+            { clamped: false, valid: false, jobName: 'OtherJob', errors: ['other reason'] },
+          ],
+          invalidCount: 2,
+        },
+      },
+    };
+    const n = shouldNotify(r);
+    check('notify === true (clamp-broken FCV)', n.notify === true, JSON.stringify(n));
+    check('reason mentions finishing cycle(s)', n.reasons.some(r => /finishing cycle/i.test(r)), JSON.stringify(n.reasons));
+    check('count is 1 (only the clamped+invalid row)', n.reasons.some(r => /1 finishing cycle/.test(r)), JSON.stringify(n.reasons));
+  }
+
+  console.log('\nTest 34: shouldNotify — clamps alone (feasible placement, unplaced=0, no clamped-invalid) do NOT notify');
+  {
+    const r = {
+      validation: { accepted: [], conflicts: [] },
+      finalPlan: {
+        placements: [{}],
+        unplacedTotal: 0,
+        windowClamps: [{ jobName: 'X', station: 'bench', computedStart: '2026-06-01', clampedStart: '2026-06-08', entirelyPast: true }],
+        warnings: [],
+        finishingCycleReport: { rows: [], invalidCount: 0 },
+      },
+    };
+    const n = shouldNotify(r);
+    check('no notify when clamps-only with unplaced=0 and no clamped-invalid FCV', n.notify === false, JSON.stringify(n));
+  }
+
+  console.log('\nTest 35: warnings > 15 → capped at 15 with +K more; warnings ≤ 15 → all shown');
+  {
+    // Exactly 15 warnings → all shown, no "+N more"
+    const result15 = {
+      validation: { accepted: [], conflicts: [] },
+      finalPlan: {
+        placements: [],
+        unplacedTotal: 0,
+        windowClamps: [],
+        warnings: Array.from({ length: 15 }, (_, i) => `warn-${i}`),
+        finishingCycleReport: { rows: [], invalidCount: 0 },
+      },
+    };
+    const s15 = buildRunSummary(result15, { mode: 'poll' });
+    check('15 warnings: all shown', s15.includes('warn-14'), s15);
+    check('15 warnings: no +N more line', !/\+\d+ more/i.test(s15), s15);
+
+    // 16 warnings → 15 shown + "+1 more"
+    const result16 = {
+      validation: { accepted: [], conflicts: [] },
+      finalPlan: {
+        placements: [],
+        unplacedTotal: 0,
+        windowClamps: [],
+        warnings: Array.from({ length: 16 }, (_, i) => `w${i}`),
+        finishingCycleReport: { rows: [], invalidCount: 0 },
+      },
+    };
+    const s16 = buildRunSummary(result16, { mode: 'poll' });
+    check('16 warnings: index 14 shown', s16.includes('w14'), s16);
+    check('16 warnings: index 15 not shown', !s16.includes('w15\n') && !s16.includes('w15 '), s16);
+    check('16 warnings: +1 more present', s16.includes('+1 more'), s16);
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

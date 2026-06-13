@@ -149,6 +149,23 @@ function buildRunSummary(result, { mode, startedAt, finishedAt, deploy } = {}) {
 
   lines.push(`Plan: ${result?.finalPlan?.placements?.length || 0} placement(s)`);
 
+  // Task 9 (2026-06-12): window clamps, plan warnings (capped at 15), unplaced.
+  const clamps = result?.finalPlan?.windowClamps || [];
+  if (clamps.length > 0) {
+    lines.push(`⏰ Window clamps: ${clamps.length} (late work pulled forward)`);
+    for (const c of clamps) {
+      lines.push(`  - ${c.jobName} / ${c.station}: ${c.computedStart}→${c.clampedStart}${c.entirelyPast ? ' (entirely past)' : ''}`);
+    }
+  }
+  const planWarnings = result?.finalPlan?.warnings || [];
+  if (planWarnings.length > 0) {
+    lines.push(`⚠️ Plan warnings: ${planWarnings.length}`);
+    for (const w of planWarnings.slice(0, 15)) lines.push(`  - ${w}`);
+    if (planWarnings.length > 15) lines.push(`  … +${planWarnings.length - 15} more — see logs/planner-<date>.log`);
+  }
+  const unplaced = result?.finalPlan?.unplacedTotal || 0;
+  if (unplaced > 0) lines.push(`🚨 UNPLACED: ${unplaced} hr(s) could not be scheduled before delivery — see warnings`);
+
   const cv = result?.outputs?.capacityView;
   if (cv) {
     lines.push(cv.ok
@@ -195,6 +212,14 @@ function shouldNotify(result) {
   // bite a rebalance — they warrant a human.
   if (result?.configLint?.errors?.length) {
     reasons.push(`${result.configLint.errors.length} config error(s) in rebalance-overrides.json (silent no-op shapes — see the run log)`);
+  }
+  // Task 9 (2026-06-12): unplaced hours + clamp-broken finishing cycles need human attention.
+  if ((result?.finalPlan?.unplacedTotal || 0) > 0) {
+    reasons.push(`${result.finalPlan.unplacedTotal} unplaced hour(s) could not be scheduled before delivery`);
+  }
+  const clampInvalid = (result?.finalPlan?.finishingCycleReport?.rows || []).filter(r => r.clamped && !r.valid);
+  if (clampInvalid.length > 0) {
+    reasons.push(`${clampInvalid.length} finishing cycle(s) broken by window clamping`);
   }
   return { notify: reasons.length > 0, reasons };
 }
