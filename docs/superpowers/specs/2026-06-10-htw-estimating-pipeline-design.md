@@ -103,6 +103,13 @@ Canonical finish unit: **1-sided-equivalent SF**. The finisher's 2-sided rate is
 
 The rulebook ships as versioned, unit-tested code in the takeoff skill, plus a human-readable reference doc. Estimator corrections at the gates feed rulebook revisions.
 
+**Confirmed engine decisions (2026-06-12):**
+- **Params string format:** `W=36 H=84 D=24 SH=3` (key=value, space-separated, INCHES). Closet panels: repeated `P=HxW` tokens, e.g. `D=14 P=84x24 P=84x18`. Both Claude (auto-fill) and the estimator (corrections) write this; the engine parses it. Inches² → SF via ÷144 before applying any per-SF factor.
+- **FF FE door rate:** job-level default door style. One door subject is set per takeoff (job_config.door_subject); every FF FE faux-door panel `(D−3")×(H−3")` prices at that door factor (per-SF). The −3" is the 1.5" faux-frame reveal on all four sides.
+- **1-sided-equivalent SF (the unifying trick):** compute total 1-sided-eq SF (back W×H + sides 2·D·H + top W·D + bottom W·D + shelves SH·W·D·**2**), then multiply by the job's **1-Sided** finish factor. Shelves are pre-doubled in the SF total, so a single 1-sided rate prices everything. Glass Door Interior = identical to Open Interior.
+- **Engine interface:** pure functions take an injected `factors` dict (subject→raw) and a `job_config` {finish_subject, door_subject, panel_subject}; never reads files directly (a thin wrapper loads the library). Output: priced components referencing real residential tool subjects (`FF FinEnds - Flush`/`FF FinEnds - FF FE (*Add Door Sf)` EA labor; `FIN - * (1 Sided)` finish SF; `DOOR - *` faux-door SF; `Panels - *` closet panel SF).
+- **Two details still open (config-flagged, confirm at Monday review):** (a) whether an FF FE faux-door panel also gets a separate finish line or finish is included in the door factor — default: included (no separate line); (b) closet loose-panel finish sidedness — default flagged, trivially flippable.
+
 ## 7. Autonomous takeoff engine (passes)
 
 - **Pass 0 — Sheet routing:** classify pages (plan/elevation/section/detail/schedule); build the plan-tag ↔ elevation-sheet crosswalk; room inventory.
