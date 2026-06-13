@@ -96,8 +96,7 @@ def _line(component, subject, unit, qty, factors):
                     round(qty * rate, 2))
 
 
-FF_FE_PANEL_ALSO_FINISHED = False
-CLOSET_PANEL_FINISH_SIDES = 1
+FF_FE_PANEL_ALSO_FINISHED = True
 
 
 def expand_frameless_end(p, factors, job):
@@ -133,14 +132,15 @@ def expand_interior(p, factors, job):
 
 def expand_closet_run(p, factors, job):
     items = []
+    sides = int(job.get("closet_panel_finish_sides", 2))
     for (H, W) in p["panels"]:
         psf = _sf((H, W))
         items.append(_line(f"Closet panel {H:g}x{W:g} material",
                            job["panel_subject"], "SF", psf, factors))
-        if CLOSET_PANEL_FINISH_SIDES:
+        if sides:
             items.append(_line(f"Closet panel {H:g}x{W:g} finish",
                                job["finish_subject"], "SF",
-                               psf * CLOSET_PANEL_FINISH_SIDES, factors))
+                               psf * sides, factors))
     return items
 
 

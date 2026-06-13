@@ -54,20 +54,21 @@ All sample calculations use these reference rates:
 
 ### Finished End (FF FE — Frame-and-Edge)
 
-**Expansion**: Frameless FE end labor (EA) plus faux door material for the panel (SF), with optional finish if configured.
+**Expansion**: Frameless FE end labor (EA) plus faux door material for the panel (SF), plus separate finish for the faux door face.
 
 **Formula**:
 - Line 1: `1 EA × FF_FE_rate = $60`
-- Line 2: `((D − 3) × (H − 3)) / 144 SF × door_rate`
+- Line 2: `((D − 3) × (H − 3)) / 144 SF × door_rate` (door material)
   - Subtracts 1.5" reveal on all sides (–3" total per dimension)
-- Optional Line 3: If config **FF_FE_PANEL_ALSO_FINISHED** is true, add `((D − 3) × (H − 3)) / 144 SF × finish_rate`
+- Line 3: `((D − 3) × (H − 3)) / 144 SF × finish_rate` (faux door finish, 1-sided)
 
 **Example** (D=24, H=84):
 - Faux door square inches: (24 − 3) × (84 − 3) = 21 × 81 = 1701
 - Square feet: 1701 / 144 = 11.8125 SF
 - Labor: 1 EA × $60/EA = $60
 - Door material: 11.8125 SF × $18/SF = $212.62
-- **Total (without finish): $272.62**
+- Faux door finish: 11.8125 SF × $2/SF = $23.62
+- **Total: $60 + $212.62 + $23.62 = $296.24**
 
 ---
 
@@ -106,16 +107,16 @@ Cost = SF × finish_rate
 - Line 1: `(H × W) / 144 SF × panel_rate` (material)
 - Line 2 (if configured): `(H × W) / 144 SF × finish_rate × sides` (finish)
 
-**Config**: **CLOSET_PANEL_FINISH_SIDES** (default: 1) — number of sides to finish per panel.
+**Config**: **closet_panel_finish_sides** (job_config key, default: 2) — number of sides to finish per panel. Set to 0 for prefinished materials (material only, no finish).
 
-**Example** (D=14, panels: 84×24 and 84×18, with 1-sided finish):
+**Example** (D=14, panels: 84×24 and 84×18, with 2-sided finish):
 - Panel 1 (84×24):
   - Material: (84 × 24) / 144 = 14 SF × $9/SF = $126
-  - Finish: 14 SF × $2/SF = $28
+  - Finish: 14 SF × $2/SF × 2 sides = $56
 - Panel 2 (84×18):
   - Material: (84 × 18) / 144 = 10.5 SF × $9/SF = $94.50
-  - Finish: 10.5 SF × $2/SF = $21
-- **Total: $269.50**
+  - Finish: 10.5 SF × $2/SF × 2 sides = $42
+- **Total: $318.50**
 
 ---
 
@@ -131,30 +132,34 @@ These are tied to real residential tool subjects in the Bluebeam templates and m
 
 ---
 
-## OPEN — Confirm at Monday Review
+## CONFIRMED — Recent Decisions
 
-The following configuration flags are one-line changes to the expansion logic. Their behavior should be validated during residential takeoffs in Phase 4:
+### 1. FF FE Faux Door Finish (CONFIRMED)
 
-### 1. **FF_FE_PANEL_ALSO_FINISHED** (default: False)
+**Decision**: Faux door panels DO get a separate finish line (finish is NOT baked into the door material rate).
 
-**Line**: `estimating/expand.py`, line 99
+**Implementation**: `FF_FE_PANEL_ALSO_FINISHED = True` in `estimating/expand.py`. The expand_ff_fe_end function now emits a finish line using `faux_door_sf` and job["finish_subject"].
 
-**Behavior**:
-- **False** (current): FF FE end panels are charged as door material only (no separate finish cost)
-- **True** (alternate): Faux door panels are finished on one side in addition to the door material charge
+**Effect**: FF FE expanded items now include three lines:
+1. Labor (EA)
+2. Door material (SF)
+3. Faux door finish (SF, 1-sided)
 
-**Decision**: Confirm with estimating whether a frame-and-edge finished end includes finish labor on the panel, or if the finish is assumed in the door material rate.
+### 2. Closet Panel Finish Sides (CONFIRMED)
 
-### 2. **CLOSET_PANEL_FINISH_SIDES** (default: 1)
+**Decision**: Closet panel finish sides is a **per-job configuration** (not a module constant). Default 2-sided finish; set to 0 for prefinished materials (material only, no finish).
 
-**Line**: `estimating/expand.py`, line 100
+**Implementation**: Removed module constant `CLOSET_PANEL_FINISH_SIDES`. The expand_closet_run function now reads from job config:
+```python
+sides = int(job.get("closet_panel_finish_sides", 2))
+```
 
-**Behavior**:
-- **1** (current): Each closet panel is finished on one side
-- **2** (alternate): Each closet panel is finished on both sides
-- **0** (no finish): Panels are material only
+**Effect**: Jobs can now specify closet finish sides via job_config:
+- `closet_panel_finish_sides=2` (default): 2-sided finish (typical)
+- `closet_panel_finish_sides=1`: 1-sided finish
+- `closet_panel_finish_sides=0`: No finish (prefinished materials)
 
-**Decision**: Confirm with estimating how many sides of closet panels receive finish, and whether this varies by job.
+**Future**: Per-marker closet finish override if a job ever mixes prefinished and raw closets (not yet implemented; would require marker-level config).
 
 ---
 

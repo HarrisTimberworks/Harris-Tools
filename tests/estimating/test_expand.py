@@ -118,7 +118,9 @@ def test_expand_ff_fe_end():
     door = bs["DOOR - Slab - Paint Grade"]
     assert door.qty == pytest.approx(11.8125)
     assert door.raw_total == pytest.approx(212.62)
-    assert "FIN - Stain (1 Sided)" not in bs
+    fin = bs["FIN - Stain (1 Sided)"]
+    assert fin.qty == pytest.approx(11.8125)
+    assert fin.raw_total == pytest.approx(23.62)
 
 
 def test_expand_open_interior():
@@ -136,6 +138,22 @@ def test_expand_closet_run_material():
     bs_panel = [i for i in items if i.subject == "Panels - Paint Grade"]
     total_panel_sf = sum(i.qty for i in bs_panel)
     assert total_panel_sf == pytest.approx(24.5)
+
+
+def test_closet_default_two_sided_finish():
+    items = expand.expand_closet_run(
+        {"D": 14, "panels": [(84, 24)]}, FACTORS, JOB)
+    fin = [i for i in items if i.subject == "FIN - Stain (1 Sided)"]
+    # panel 84x24 = 14 SF, 2-sided = 28 SF finish
+    assert sum(i.qty for i in fin) == pytest.approx(28.0)
+
+
+def test_closet_prefinished_no_finish():
+    job = dict(JOB, closet_panel_finish_sides=0)
+    items = expand.expand_closet_run(
+        {"D": 14, "panels": [(84, 24)]}, FACTORS, job)
+    assert all(i.subject == "Panels - Paint Grade" for i in items)
+    assert not any(i.subject == "FIN - Stain (1 Sided)" for i in items)
 
 
 def test_missing_factor_raises():
