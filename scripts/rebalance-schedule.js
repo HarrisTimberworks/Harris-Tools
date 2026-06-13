@@ -777,7 +777,7 @@ async function loadAll({ gqlFn = gql } = {}) {
 // CAPACITY MODEL
 // ============================================================================
 
-function buildCapacityGrid(crewParents, timeOffList, weeks, existingSubs, activeJobMasterPmIds, ctx = null) {
+function buildCapacityGrid(crewParents, timeOffList, weeks, existingSubs, activeJobMasterPmIds, ctx = null, preserveOpts = null) {
   // grid[crew][week] = { parentId, base, timeOff, available, committed, assignments }
   const grid = {};
   for (const crew of Object.keys(CREW_BASE_HOURS)) {
@@ -861,8 +861,18 @@ function buildCapacityGrid(crewParents, timeOffList, weeks, existingSubs, active
 
   // PATCH A: Pre-load ONLY subitems from jobs NOT being rescheduled
   // (subitems for active jobs will be deleted, so don't count their load)
+  // Current-week preservation (2026-06-12): when preserveOpts is set and a sub
+  // belongs to an active job in the current week AND that job is not in rewriteJobIds,
+  // treat it as preExisting committed reality rather than skipping it.
   for (const sub of existingSubs) {
-    if (activeJobMasterPmIds.has(sub.masterPmId)) continue;  // skip — will be deleted
+    if (activeJobMasterPmIds.has(sub.masterPmId)) {
+      // Active job sub — normally skip (will be deleted/rescheduled).
+      // Exception: preserve current-week subs that aren't being rewritten.
+      const preservedHere = preserveOpts
+        && sub.parentWeek === preserveOpts.currentWeekMonday
+        && !preserveOpts.rewriteJobIds.has(String(sub.masterPmId));
+      if (!preservedHere) continue;  // future rows: deleted on deploy, don't count
+    }
     if (!sub.parentCrew || !sub.parentWeek) continue;
     const slot = grid[sub.parentCrew]?.[sub.parentWeek];
     if (!slot) continue;
@@ -1943,7 +1953,32 @@ async function runPlan(boards, opts = {}) {
 
   // Build set of Master PM IDs for active jobs (their subitems will be deleted/rescheduled)
   const activeJobMasterPmIds = new Set(activeJobs.map(j => j.masterPmId).filter(Boolean));
-  const grid = buildCapacityGrid(crewParents, timeOff, weeks, existingSubs, activeJobMasterPmIds, ctx);
+
+  // Current-week preservation (2026-06-12): mid-week, the deployed current week
+  // is committed reality — preserved on the board, counted as preExisting,
+  // and its hours subtracted from what gets re-planned. rewriteJobIds (Task 7)
+  // carves jobs with a current-week override row back into full rewrite.
+  // NOTE: computeCurrentWeekRewriteIds is stubbed as () => new Set() here;
+  // Task 7 replaces this stub with the real exported helper.
+  const computeCurrentWeekRewriteIds = () => new Set();
+  const rewriteJobIds = computeCurrentWeekRewriteIds(overrideRows, crewParents, ctx.currentWeekMonday);
+  const preservedKey = (mpm, station) => `${mpm}|${station}`;
+  const preservedCurrentWeekHours = new Map();
+  if (ctx.isMidWeek) {
+    for (const sub of existingSubs) {
+      if (!activeJobMasterPmIds.has(sub.masterPmId)) continue;  // only active jobs matter
+      if (sub.parentWeek !== ctx.currentWeekMonday) continue;
+      if (rewriteJobIds.has(String(sub.masterPmId))) continue;
+      const k = preservedKey(String(sub.masterPmId), sub.station);
+      preservedCurrentWeekHours.set(k, (preservedCurrentWeekHours.get(k) || 0) + sub.hours);
+    }
+  }
+  const preservedFor = (job, station) => preservedCurrentWeekHours.get(preservedKey(String(job.masterPmId), station)) || 0;
+
+  const preserveOpts = ctx.isMidWeek
+    ? { currentWeekMonday: ctx.currentWeekMonday, rewriteJobIds }
+    : null;
+  const grid = buildCapacityGrid(crewParents, timeOff, weeks, existingSubs, activeJobMasterPmIds, ctx, preserveOpts);
 
   const allPlacements = [];
   const warnings = [];
@@ -2017,11 +2052,11 @@ async function runPlan(boards, opts = {}) {
     }
 
     const stations = [
-      { name: 'Engineering', hours: job.hours.eng, win: windows.eng },
-      { name: 'Panel Processing', hours: job.hours.panel, win: windows.panel },
-      { name: 'Benchwork', hours: job.hours.bench, win: windows.bench },
-      { name: 'Pre Fin Cab Assembly', hours: job.hours.prefin, win: windows.prefin },
-      { name: 'Post Fin Cab Assembly', hours: job.hours.postfin, win: windows.postfin },
+      { name: 'Engineering',          hours: Math.max(0, job.hours.eng    - preservedFor(job, 'Engineering')),          win: windows.eng },
+      { name: 'Panel Processing',     hours: Math.max(0, job.hours.panel  - preservedFor(job, 'Panel Processing')),     win: windows.panel },
+      { name: 'Benchwork',            hours: Math.max(0, job.hours.bench  - preservedFor(job, 'Benchwork')),            win: windows.bench },
+      { name: 'Pre Fin Cab Assembly', hours: Math.max(0, job.hours.prefin - preservedFor(job, 'Pre Fin Cab Assembly')), win: windows.prefin },
+      { name: 'Post Fin Cab Assembly',hours: Math.max(0, job.hours.postfin- preservedFor(job, 'Post Fin Cab Assembly')),win: windows.postfin },
     ];
 
     for (const s of stations) {
@@ -2047,7 +2082,7 @@ async function runPlan(boards, opts = {}) {
       const forceResult = applyForceAssignments(grid, job, ps, wk, 2);
       allPlacements.push(...forceResult.placements);
       for (const w of forceResult.warnings) warnings.push(w);
-      const remaining = Math.max(0, 2 - forceResult.hoursConsumed);
+      const remaining = Math.max(0, 2 - forceResult.hoursConsumed - preservedFor(job, ps));
       if (remaining > 0) {
         const result = allocateStationWeek(grid, job, ps, wk, remaining, ['Paisios', 'Ian', 'Spencer', 'Bob', 'Jonathan']);
         allPlacements.push(...result.placements);
