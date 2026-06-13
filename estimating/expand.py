@@ -6,6 +6,16 @@ Params are INCHES; convert in^2 -> SF via /144 before per-SF factors."""
 import re
 from dataclasses import dataclass
 
+
+@dataclass
+class LineItem:
+    component: str
+    subject: str
+    unit: str
+    qty: float
+    raw_unit: float
+    raw_total: float
+
 _SCALAR = re.compile(r"^([A-Za-z]+)=(\d+(?:\.\d+)?)$")
 _PANEL = re.compile(r"^P=(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)$")
 VALID_KEYS = {"W", "H", "D", "SH"}
@@ -72,3 +82,63 @@ def faux_door_sf(D, H):
     if H <= 3:
         raise ValueError(f"faux_door_sf: H must be > 3, got {H}")
     return _sf((D - 3.0, H - 3.0))
+
+
+def _rate(factors, subject):
+    if subject not in factors:
+        raise KeyError(f"{subject!r} not in factor library")
+    return float(factors[subject])
+
+
+def _line(component, subject, unit, qty, factors):
+    rate = _rate(factors, subject)
+    return LineItem(component, subject, unit, round(qty, 4), rate,
+                    round(qty * rate, 4))
+
+
+FF_FE_PANEL_ALSO_FINISHED = False
+CLOSET_PANEL_FINISH_SIDES = 1
+
+
+def expand_frameless_end(p, factors, job):
+    sf = finished_end_sf(p["D"], p["H"])
+    return [_line("Finished end finish", job["finish_subject"], "SF", sf, factors)]
+
+
+def expand_ff_flush_end(p, factors, job):
+    sf = finished_end_sf(p["D"], p["H"])
+    return [
+        _line("FF flush end labor", "FF FinEnds - Flush", "EA", 1, factors),
+        _line("Finished end finish", job["finish_subject"], "SF", sf, factors),
+    ]
+
+
+def expand_ff_fe_end(p, factors, job):
+    door_sf = faux_door_sf(p["D"], p["H"])
+    items = [
+        _line("FF FE end labor", "FF FinEnds - FF FE (*Add Door Sf)", "EA", 1, factors),
+        _line("Faux door panel", job["door_subject"], "SF", door_sf, factors),
+    ]
+    if FF_FE_PANEL_ALSO_FINISHED:
+        items.append(_line("Faux door finish", job["finish_subject"], "SF",
+                           door_sf, factors))
+    return items
+
+
+def expand_interior(p, factors, job):
+    sf = interior_one_sided_sf(p["W"], p["H"], p["D"], p.get("SH", 0))
+    return [_line("Interior finish (1-sided-eq)", job["finish_subject"], "SF",
+                  sf, factors)]
+
+
+def expand_closet_run(p, factors, job):
+    items = []
+    for (H, W) in p["panels"]:
+        psf = _sf((H, W))
+        items.append(_line(f"Closet panel {H:g}x{W:g} material",
+                           job["panel_subject"], "SF", psf, factors))
+        if CLOSET_PANEL_FINISH_SIDES:
+            items.append(_line(f"Closet panel {H:g}x{W:g} finish",
+                               job["finish_subject"], "SF",
+                               psf * CLOSET_PANEL_FINISH_SIDES, factors))
+    return items

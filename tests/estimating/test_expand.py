@@ -74,3 +74,70 @@ def test_interior_rejects_nonpositive_but_allows_zero_shelves():
     expand.interior_one_sided_sf(36, 84, 24, 0)   # ok
     with pytest.raises(ValueError):
         expand.interior_one_sided_sf(0, 84, 24, 2)
+
+
+FACTORS = {
+    "FF FinEnds - Flush": 35.0,
+    "FF FinEnds - FF FE (*Add Door Sf)": 60.0,
+    "FIN - Stain (1 Sided)": 2.0,
+    "DOOR - Slab - Paint Grade": 18.0,
+    "Panels - Paint Grade": 9.0,
+}
+JOB = {"finish_subject": "FIN - Stain (1 Sided)",
+       "door_subject": "DOOR - Slab - Paint Grade",
+       "panel_subject": "Panels - Paint Grade"}
+
+
+def _by_subject(items):
+    return {i.subject: i for i in items}
+
+
+def test_expand_frameless_end():
+    items = expand.expand_frameless_end({"D": 24, "H": 84}, FACTORS, JOB)
+    assert len(items) == 1
+    fin = items[0]
+    assert fin.subject == "FIN - Stain (1 Sided)"
+    assert fin.qty == pytest.approx(14.0)
+    assert fin.unit == "SF"
+    assert fin.raw_total == pytest.approx(28.0)
+
+
+def test_expand_ff_flush_end():
+    items = expand.expand_ff_flush_end({"D": 24, "H": 84}, FACTORS, JOB)
+    bs = _by_subject(items)
+    assert bs["FF FinEnds - Flush"].qty == 1
+    assert bs["FF FinEnds - Flush"].unit == "EA"
+    assert bs["FF FinEnds - Flush"].raw_total == pytest.approx(35.0)
+    assert bs["FIN - Stain (1 Sided)"].raw_total == pytest.approx(28.0)
+
+
+def test_expand_ff_fe_end():
+    items = expand.expand_ff_fe_end({"D": 24, "H": 84}, FACTORS, JOB)
+    bs = _by_subject(items)
+    assert bs["FF FinEnds - FF FE (*Add Door Sf)"].raw_total == pytest.approx(60.0)
+    door = bs["DOOR - Slab - Paint Grade"]
+    assert door.qty == pytest.approx(11.8125)
+    assert door.raw_total == pytest.approx(212.625)
+    assert "FIN - Stain (1 Sided)" not in bs
+
+
+def test_expand_open_interior():
+    items = expand.expand_interior({"W": 36, "H": 84, "D": 24, "SH": 3},
+                                   FACTORS, JOB)
+    assert len(items) == 1
+    assert items[0].subject == "FIN - Stain (1 Sided)"
+    assert items[0].qty == pytest.approx(97.0)
+    assert items[0].raw_total == pytest.approx(194.0)
+
+
+def test_expand_closet_run_material():
+    items = expand.expand_closet_run(
+        {"D": 14, "panels": [(84, 24), (84, 18)]}, FACTORS, JOB)
+    bs_panel = [i for i in items if i.subject == "Panels - Paint Grade"]
+    total_panel_sf = sum(i.qty for i in bs_panel)
+    assert total_panel_sf == pytest.approx(24.5)
+
+
+def test_missing_factor_raises():
+    with pytest.raises(KeyError, match="not in factor library"):
+        expand.expand_frameless_end({"D": 24, "H": 84}, {}, JOB)
