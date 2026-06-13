@@ -127,3 +127,13 @@ def test_write_includes_intake_and_warnings_sheets(tmp_path):
     wb = openpyxl.load_workbook(out)
     assert "Intake (needs pricing)" in wb.sheetnames
     assert "Warnings" in wb.sheetnames
+
+
+def test_markup_record_maps_bluebeam_entry():
+    raw = {"type": "Polygon", "subject": "CASE-COMM - Base PLam - LF",
+           "measurement": "12.5 SF", "Assembly Params": "", "status": "Verified"}
+    rec = importer.markup_record(raw)
+    assert rec["subject"] == "CASE-COMM - Base PLam - LF"
+    assert rec["unit"] == "SF"
+    assert rec["measurement"] == 12.5
+    assert rec["status"] == "Verified"

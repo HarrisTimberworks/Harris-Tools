@@ -10,6 +10,32 @@ from . import expand
 from .expand import LineItem
 
 
+_UNIT_BY_TYPE = {
+    "Bluebeam.PDF.Annotations.AnnotationMeasurePolylength": "LF",
+    "Bluebeam.PDF.Annotations.AnnotationMeasureArea": "SF",
+    "Bluebeam.PDF.Annotations.AnnotationMeasureCount": "EA",
+    "PolyLine": "LF", "Polygon": "SF", "Count": "EA",
+}
+
+
+def markup_record(raw, *, params_column="Assembly Params",
+                  state_column="status"):
+    """Map one Bluebeam list_markups_in_pdf entry (a dict of properties +
+    custom columns) to the importer's markup-record contract. Tolerant of
+    missing fields. `raw` keys are Bluebeam property names."""
+    typ = raw.get("type") or raw.get("Type") or ""
+    unit = _UNIT_BY_TYPE.get(typ, "?")
+    meas = raw.get("measurement") or raw.get("Measurement") or 0
+    try:
+        meas = float(str(meas).split()[0]) if meas else 0.0
+    except (ValueError, IndexError):
+        meas = 0.0
+    return {"subject": raw.get("subject") or raw.get("Subject") or "",
+            "measurement": meas, "unit": unit,
+            "params": raw.get(params_column, "") or "",
+            "status": raw.get(state_column) or "Verified"}
+
+
 @dataclass
 class ImportResult:
     line_items: list = field(default_factory=list)
