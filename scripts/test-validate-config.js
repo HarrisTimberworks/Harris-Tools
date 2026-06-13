@@ -94,6 +94,72 @@ const CTX = {
     check('no id/crew errors without context', r.errors.length === 0, JSON.stringify(r.errors));
   }
 
+  // Task 11 (2026-06-12) — stale customWindow detection
+
+  console.log('\nTest 7: customWindow entirely before effectiveWeek → warning');
+  {
+    // window.end 2026-05-22 < effectiveWeek 2026-06-15 → stale
+    const r = validateOverridesConfig({
+      jobOverrides: {
+        'X': {
+          name: 'Old Job',
+          customWindow: {
+            bench: { start: '2026-05-18', end: '2026-05-22' },
+          },
+        },
+      },
+    }, { ...CTX, effectiveWeek: '2026-06-15' });
+    check('stale customWindow fires a warning',
+      r.warnings.some(w => /jobOverrides\[X\]\.customWindow\.bench is entirely in the past/.test(w)),
+      JSON.stringify(r.warnings));
+    check('warning text includes end date',
+      r.warnings.some(w => /ended 2026-05-22/.test(w)),
+      JSON.stringify(r.warnings));
+    check('warning text includes effectiveWeek',
+      r.warnings.some(w => /effective week 2026-06-15/.test(w)),
+      JSON.stringify(r.warnings));
+    check('warning is a warning only, not an error',
+      !r.errors.some(e => /customWindow\.bench/.test(e) && /in the past/.test(e)),
+      JSON.stringify(r.errors));
+  }
+
+  console.log('\nTest 8: customWindow spanning effectiveWeek → no warning');
+  {
+    // window.end 2026-06-19 >= effectiveWeek 2026-06-15 → not stale
+    const r = validateOverridesConfig({
+      jobOverrides: {
+        'X': {
+          name: 'Active Job',
+          customWindow: {
+            bench: { start: '2026-06-08', end: '2026-06-19' },
+          },
+        },
+      },
+    }, { ...CTX, effectiveWeek: '2026-06-15' });
+    check('spanning window produces no stale warning',
+      !r.warnings.some(w => /entirely in the past/.test(w)),
+      JSON.stringify(r.warnings));
+  }
+
+  console.log('\nTest 9: no effectiveWeek in opts → stale customWindow check skipped entirely');
+  {
+    // Without effectiveWeek, the check must be skipped (back-compat: context
+    // without effectiveWeek means legacy caller, not a bug to warn about).
+    const r = validateOverridesConfig({
+      jobOverrides: {
+        'X': {
+          name: 'Old Job',
+          customWindow: {
+            bench: { start: '2026-01-05', end: '2026-01-09' },
+          },
+        },
+      },
+    }, CTX);  // CTX has no effectiveWeek
+    check('no stale warning without effectiveWeek',
+      !r.warnings.some(w => /entirely in the past/.test(w)),
+      JSON.stringify(r.warnings));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

@@ -130,6 +130,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
       jobIds: (boards.jobs || []).map(j => j.id),
       crews,
       todayISO,
+      effectiveWeek: ctx.effectiveWeek,
     });
   } catch (e) {
     configLint.warnings.push(`config lint itself failed: ${e.message}`);

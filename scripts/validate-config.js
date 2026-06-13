@@ -20,13 +20,16 @@ function isMonday(iso) {
 // cfg: the parsed overrides JSON.
 // context: { jobIds: Set/array of valid PL job ids, crews: Set/array of
 //            valid crew names (board crew parents + subcontractor pool
-//            names), todayISO: 'YYYY-MM-DD' (for past-week warnings) }
+//            names), todayISO: 'YYYY-MM-DD' (for past-week warnings),
+//            effectiveWeek: 'YYYY-MM-DD' (for stale-customWindow warnings;
+//            absent → check skipped for back-compat) }
 function validateOverridesConfig(cfg, context = {}) {
   const errors = [];
   const warnings = [];
   const jobIds = new Set([...(context.jobIds || [])].map(String));
   const crews = new Set([...(context.crews || [])].map(String));
   const todayISO = context.todayISO || null;
+  const effectiveWeek = context.effectiveWeek || null;
 
   (cfg.forceAssignments || []).forEach((f, i) => {
     const tag = `forceAssignments[${i}] (${f.crew || '?'} / ${f.jobId || '?'} / ${f.week || '?'})`;
@@ -56,6 +59,12 @@ function validateOverridesConfig(cfg, context = {}) {
     for (const [station, w] of Object.entries(j.customWindow || {})) {
       if (w && w.start && !isMonday(w.start)) {
         errors.push(`jobOverrides['${id}'].customWindow.${station}: start '${w.start}' is not a Monday — locked convention (2026-05-17): non-Monday starts silently fail placement`);
+      }
+      // Task 11 (2026-06-12): stale stop-gap detection — warn when the window
+      // has entirely passed the effective planning week. Check only when
+      // effectiveWeek is provided (absent → back-compat, skip the check).
+      if (effectiveWeek && w && w.end && w.end < effectiveWeek) {
+        warnings.push(`jobOverrides[${id}].customWindow.${station} is entirely in the past (ended ${w.end}, effective week ${effectiveWeek}) — stale stop-gap?`);
       }
     }
   }
