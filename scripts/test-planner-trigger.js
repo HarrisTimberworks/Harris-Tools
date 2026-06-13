@@ -195,6 +195,14 @@ function baseDeps(gql, fakeFs, runPlannerFn) {
     const s5 = buildRunSummary(r5, meta);
     check('lead-times failure: error text surfaced in summary', /lead-times boom/.test(s5), s5);
     check('lead-times failure: mentions Lead-times / FAILED', /[Ll]ead-[Tt]imes.*FAIL/i.test(s5) || /FAIL.*[Ll]ead/i.test(s5), s5);
+
+    const r6 = cleanResult();
+    r6.progressWarnings = ['Nudge Me Panel: ⏳ Hrs Left is 0 but station not ticked — tick ✅ Stations Complete if truly done'];
+    const s6 = buildRunSummary(r6, meta);
+    check('progress warnings surfaced in summary', /Shop-floor progress: 1 note/.test(s6) && /Nudge Me Panel/.test(s6), s6);
+    check('clean result has no progress block', !/Shop-floor progress/.test(buildRunSummary(cleanResult(), meta)), '');
+    check('progress warnings alone do NOT notify (summary-only per spec)',
+      shouldNotify(r6).notify === false, JSON.stringify(shouldNotify(r6)));
   }
 
   console.log('\nTest 5: shouldNotify — silent on clean success only');

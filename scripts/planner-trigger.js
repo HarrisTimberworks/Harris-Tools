@@ -134,6 +134,14 @@ function buildRunSummary(result, { mode, startedAt, finishedAt, deploy } = {}) {
     lines.push(`  ✗ row ${c.rowId}: ${c.reason}`);
   }
 
+  // ⏳ shop-floor progress notes (spec 2026-06-12) — summary-only, no
+  // notification (shouldNotify deliberately ignores these).
+  const pw = result?.progressWarnings || [];
+  if (pw.length > 0) {
+    lines.push(`Shop-floor progress: ${pw.length} note(s)`);
+    for (const w of pw) lines.push(`  ⚠️ ${w}`);
+  }
+
   if (result?.planError) {
     // REVIEW FIX — only the structured planError path (run-planner's pass-2
     // guard) verified that the previous state was preserved. An unexpected

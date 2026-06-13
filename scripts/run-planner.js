@@ -142,6 +142,14 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   for (const e of configLint.errors) console.log(`  ✗ ${e}`);
   for (const w of configLint.warnings) console.log(`  ⚠️  ${w}`);
 
+  // ⏳ Hrs Left progress warnings (spec 2026-06-12): summary-only visibility
+  // for shop-floor partial-progress entries — tick nudges, contradictions,
+  // overrun info. Never blocks the run, never notifies.
+  const progressWarnings = (deps.shopProgressWarnings || reb.shopProgressWarnings)(boards.jobs || []);
+  console.log('\n=== SHOP-FLOOR PROGRESS ===');
+  if (progressWarnings.length === 0) console.log('  clean ✅');
+  for (const w of progressWarnings) console.log(`  ⚠️  ${w}`);
+
   // Pass 1: baseline. Strip overrideRows so the baseline reflects the
   // structural-config-only world. The validator's consistency check
   // compares row.fromCrew × row.fromWeek × row.station × jobMpmId against
@@ -240,7 +248,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
     const flip = await _writeRowDecisions(failureFlip, { gqlFn: _gqlFn, today: todayISO, dryRun: _dryRun });
     console.log(`  written: ${flip.written}, skipped: ${flip.skipped}, errors: ${flip.errors.length}`);
     console.log('  No plan/validation files written; Capacity View + Weekly Briefing not regenerated.');
-    return { baselinePlan, validation, planError: msg };
+    return { baselinePlan, validation, planError: msg, progressWarnings };
   }
 
   // C5/C8 — derive the 🔧 tuple set BEFORE persisting validation, so the
@@ -288,7 +296,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   const PL_STATUS_COL = 'color_mm26404x';
   const rtsCandidates = (boards.jobs || []).filter(j =>
     ['Not Started', 'Scheduled', 'Ready to Schedule', 'Finishing'].includes(j.status)
-    && _isReadyToShip(j.formulaHours, j.stationsComplete));
+    && _isReadyToShip(j.formulaHours, j.stationsComplete, j.hrsLeft));
   console.log('\n=== STATUS DERIVATION ===');
   const statusDerivation = { flipped: [], dryRun: _dryRun };
   if (rtsCandidates.length === 0) {
@@ -392,7 +400,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
     }
   }
 
-  return { baselinePlan, validation, finalPlan, planFile, validationFile, outputs, configLint };
+  return { baselinePlan, validation, finalPlan, planFile, validationFile, outputs, configLint, progressWarnings };
 }
 
 module.exports = { runPlanner };

@@ -3,5 +3,15 @@
   "groupId": "group_mm47eq7n",
   "itemId": "12248969189",
   "statusColumnId": "color_mm3aqx5g",
-  "createdAt": "2026-06-11"
+  "createdAt": "2026-06-11",
+  "quotesGroupId": "group_mm49tvn2",
+  "quoteColumns": {
+    "jobType": "dropdown_mm49d7fg",
+    "boxes": "numeric_mm493c31",
+    "complexity": "numeric_mm49gc7v",
+    "targetDate": "date_mm49qk4q",
+    "status": "color_mm493gb",
+    "quotedWeek": "date_mm497ht4",
+    "capacityWeek": "date_mm49bj6c"
+  }
 }

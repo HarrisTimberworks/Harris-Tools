@@ -178,6 +178,8 @@ const FORMULA = { eng: 8.6, panel: 19.5, bench: 2.3, prefin: 0, postfin: 13.5 };
         stationsComplete: ['Bench'], hrsLeft: { ...empty, bench: 12 } },
       { name: 'PriorityInvalidOverContra', status: 'Scheduled', formulaHours: F,
         stationsComplete: ['Bench'], hrsLeft: { ...empty, bench: -2 } },
+      { name: 'PriorityInfinity', status: 'Scheduled', formulaHours: F,
+        stationsComplete: ['Bench'], hrsLeft: { ...empty, bench: Infinity } },
     ];
     const w = shopProgressWarnings(jobs);
     check('tick nudge fired', w.some(x => /NudgeJob Panel: .*0 but station not ticked/.test(x)), JSON.stringify(w));
@@ -192,7 +194,10 @@ const FORMULA = { eng: 8.6, panel: 19.5, bench: 2.3, prefin: 0, postfin: 13.5 };
     check('priority: invalid beats contradiction (ticked + -2)',
       w.some(x => /PriorityInvalidOverContra Bench: invalid/.test(x))
       && !w.some(x => /PriorityInvalidOverContra Bench: ticked complete/.test(x)), JSON.stringify(w));
-    check('exactly 6 warnings', w.length === 6, JSON.stringify(w));
+    check('priority: invalid beats contradiction even when v>0 (ticked + Infinity)',
+      w.some(x => /PriorityInfinity Bench: invalid/.test(x))
+      && !w.some(x => /PriorityInfinity Bench: ticked complete/.test(x)), JSON.stringify(w));
+    check('exactly 7 warnings', w.length === 7, JSON.stringify(w));
     check('null/empty jobs safe', Array.isArray(shopProgressWarnings(null)) && shopProgressWarnings([]).length === 0, '');
   }
 
