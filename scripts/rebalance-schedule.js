@@ -1958,9 +1958,6 @@ async function runPlan(boards, opts = {}) {
   // is committed reality — preserved on the board, counted as preExisting,
   // and its hours subtracted from what gets re-planned. rewriteJobIds (Task 7)
   // carves jobs with a current-week override row back into full rewrite.
-  // NOTE: computeCurrentWeekRewriteIds is stubbed as () => new Set() here;
-  // Task 7 replaces this stub with the real exported helper.
-  const computeCurrentWeekRewriteIds = () => new Set();
   const rewriteJobIds = computeCurrentWeekRewriteIds(overrideRows, crewParents, ctx.currentWeekMonday);
   const preservedKey = (mpm, station) => `${mpm}|${station}`;
   const preservedCurrentWeekHours = new Map();
@@ -2091,6 +2088,16 @@ async function runPlan(boards, opts = {}) {
     }
   }
 
+  // Current-week truthfulness (2026-06-12): warn when a replanned sub has no
+  // parentWeek — it's protected from deletion (safety default) but may be stale.
+  const replannedMpms = new Set(allPlacements.map(p => p.masterPmId).filter(Boolean).map(String));
+  for (const sub of existingSubs) {
+    if (!sub.masterPmId || !replannedMpms.has(String(sub.masterPmId))) continue;
+    if (!sub.parentWeek) {
+      warnings.push(`subitem ${sub.id} (${sub.name || 'unnamed'}) has no parent week — protected from deletion, clean up manually`);
+    }
+  }
+
   // Build summary report
   const finishingCycleReport = {
     rows: finishingCycleRows,
@@ -2110,12 +2117,15 @@ async function runPlan(boards, opts = {}) {
     placements: allPlacements,
     finishingCycleReport,
     finishDateWritebacks,
-    // AUDIT FIX (2026-06-11): delete only where this plan holds a
-    // replacement — see computeSubitemDeletes. The old activeJobs match had
-    // two data-loss vectors: null===null matched every UNLINKED subitem on
-    // the board, and active-but-unplanned jobs (missing delivery, all
-    // windows past) lost their subitems with nothing re-created.
-    existingSubitemIdsToDelete: computeSubitemDeletes(existingSubs, allPlacements),
+    // AUDIT FIX (2026-06-11): delete only where this plan holds a replacement.
+    // Current-week truthfulness (2026-06-12): week-aware opts guard past weeks
+    // (immutable history) and current week (committed reality) from deletion.
+    existingSubitemIdsToDelete: computeSubitemDeletes(existingSubs, allPlacements, {
+      effectiveWeek: ctx.effectiveWeek,
+      currentWeekMonday: ctx.currentWeekMonday,
+      isMidWeek: ctx.isMidWeek,
+      rewriteJobIds,
+    }),
   };
 
   // Build visual capacity summary
@@ -2287,6 +2297,24 @@ async function runPlan(boards, opts = {}) {
 // EXECUTE MODE — applies the most recent plan
 // ============================================================================
 
+// Current-week truthfulness (2026-06-12): jobs with an accepted override row
+// touching the current week opt OUT of preservation — explicit mid-week moves
+// rewrite that job's current week exactly as before.
+function computeCurrentWeekRewriteIds(overrideRows, crewParents, currentWeekMonday) {
+  const weekByParent = new Map();
+  for (const p of crewParents || []) weekByParent.set(String(p.parentId), p.week);
+  const ids = new Set();
+  for (const row of overrideRows || []) {
+    if (row.status !== 'Pending' && row.status !== 'Applied') continue;
+    const fromWeek = row.fromCrewParentId ? weekByParent.get(String(row.fromCrewParentId)) : null;
+    const toWeek   = row.toCrewParentId   ? weekByParent.get(String(row.toCrewParentId))   : null;
+    if (fromWeek === currentWeekMonday || toWeek === currentWeekMonday) {
+      if (row.jobMpmId != null) ids.add(String(row.jobMpmId));
+    }
+  }
+  return ids;
+}
+
 // Returns the basename of the most-recent rebalance-plan-*.json in logsDir,
 // or null if none exists. Filter requires literal `.json` suffix so stray
 // `.bak` / `.tmp` / `.old` siblings can't outrank the canonical file in
@@ -2299,7 +2327,13 @@ async function runPlan(boards, opts = {}) {
 // match anything (the old null===null path queued every unlinked subitem on
 // the board for deletion). Complete-job records and active-but-unplanned
 // jobs are preserved.
-function computeSubitemDeletes(existingSubs, placements) {
+// Current-week truthfulness (2026-06-12): optional third param opts:
+//   { effectiveWeek, currentWeekMonday, isMidWeek, rewriteJobIds }
+// When provided: history guard (parentWeek < effectiveWeek → never delete),
+// current-week preservation (isMidWeek && parentWeek === currentWeekMonday &&
+// !rewriteJobIds → never delete), missing/null parentWeek → never delete
+// (safety). Without opts ⇒ legacy two-arg behavior (Tests 1–6 unchanged).
+function computeSubitemDeletes(existingSubs, placements, opts = null) {
   const replanned = new Set(
     (placements || [])
       .map(p => p.masterPmId)
@@ -2307,6 +2341,14 @@ function computeSubitemDeletes(existingSubs, placements) {
       .map(String));
   return (existingSubs || [])
     .filter(s => s.masterPmId !== null && s.masterPmId !== undefined && replanned.has(String(s.masterPmId)))
+    .filter(s => {
+      if (!opts) return true;                                     // legacy callers — no change
+      if (!s.parentWeek) return false;                            // safety: unknown week → protect
+      if (s.parentWeek < opts.effectiveWeek) return false;        // history guard
+      if (opts.isMidWeek && s.parentWeek === opts.currentWeekMonday
+          && !opts.rewriteJobIds.has(String(s.masterPmId))) return false;  // committed reality
+      return true;
+    })
     .map(s => s.id);
 }
 
@@ -2536,6 +2578,8 @@ module.exports = {
   STATION_LABEL_TO_KEY,
   // Audit fixes (2026-06-11).
   computeSubitemDeletes,
+  // Current-week truthfulness (2026-06-12).
+  computeCurrentWeekRewriteIds,
   // Overrides config exported for tests (synthetic forceAssignment injection
   // in test-force-unplaced-accounting.js — getForceAssignments falls back to
   // OVERRIDES.forceAssignments when no runPlan merge is active).

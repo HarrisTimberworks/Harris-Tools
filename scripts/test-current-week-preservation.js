@@ -176,33 +176,51 @@ function restore() { console.log = realLog; console.error = realErr; }
   }
 
   // -------------------------------------------------------------------------
-  // TODO(task7): Tests 3–5 assert week-aware delete behavior. They depend on
-  // computeSubitemDeletes opts wiring (Task 7). Writing them now for their
-  // FINAL (Task 7) behavior; they are skipped here and un-skipped in Task 7.
+  // Tests 3–5: week-aware delete behavior (Task 7 un-skipped)
   // -------------------------------------------------------------------------
   console.log('\nTest 3: preserved current-week rows NOT in the delete set; past-week rows NOT either');
   {
-    // SKIP(awaiting task 7): computeSubitemDeletes still uses legacy two-arg form
-    // After Task 7 lands these must pass:
-    //   !plan.existingSubitemIdsToDelete.includes('sub-608')  — current week preserved
-    //   !plan.existingSubitemIdsToDelete.includes('sub-601')  — past week is history
-    console.log('  ⏭ SKIP(awaiting task 7) — week-aware delete guard wired in Task 7');
-    checks++;  // count the skip so totals track correctly
+    let plan;
+    silence();
+    try { plan = await runPlan(boards, { savePath: null, nowContext: WED_AM }); }
+    finally { restore(); }
+
+    check('6/08 sub preserved (current week)',
+      !plan.existingSubitemIdsToDelete.includes('sub-608'),
+      JSON.stringify(plan.existingSubitemIdsToDelete));
+    check('6/01 sub preserved (past week / history)',
+      !plan.existingSubitemIdsToDelete.includes('sub-601'),
+      JSON.stringify(plan.existingSubitemIdsToDelete));
   }
 
   console.log('\nTest 4: future-week rows of replanned jobs still deleted (full overwrite ahead)');
   {
-    // SKIP(awaiting task 7): sub-615 @ 6/15 should be deleted (future week, job replanned)
-    console.log('  ⏭ SKIP(awaiting task 7) — week-aware delete guard wired in Task 7');
-    checks++;
+    let plan;
+    silence();
+    try { plan = await runPlan(boards, { savePath: null, nowContext: WED_AM }); }
+    finally { restore(); }
+
+    check('6/15 sub deleted (future week, job replanned)',
+      plan.existingSubitemIdsToDelete.includes('sub-615'),
+      JSON.stringify(plan.existingSubitemIdsToDelete));
   }
 
   console.log('\nTest 5: weekend context — ending week falls under history protection');
   {
-    // SKIP(awaiting task 7): under WEEKEND ctx (effectiveWeek 6/15, isMidWeek false),
-    // sub-608 @ 6/08 is past history → protected. sub-615 @ 6/15 → deleted (future >= effectiveWeek).
-    console.log('  ⏭ SKIP(awaiting task 7) — week-aware delete guard wired in Task 7');
-    checks++;
+    // Under WEEKEND ctx (effectiveWeek 6/15, isMidWeek false):
+    //   sub-608 @ 6/08 is past history → protected
+    //   sub-615 @ 6/15 → deleted (>= effectiveWeek, job replanned)
+    let plan;
+    silence();
+    try { plan = await runPlan(boards, { savePath: null, nowContext: WEEKEND }); }
+    finally { restore(); }
+
+    check('weekend: 6/08 sub protected as history',
+      !plan.existingSubitemIdsToDelete.includes('sub-608'),
+      JSON.stringify(plan.existingSubitemIdsToDelete));
+    check('weekend: 6/15 sub deleted (future >= effectiveWeek)',
+      plan.existingSubitemIdsToDelete.includes('sub-615'),
+      JSON.stringify(plan.existingSubitemIdsToDelete));
   }
 
   // -------------------------------------------------------------------------
