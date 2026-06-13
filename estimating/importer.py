@@ -27,13 +27,13 @@ def markup_record(raw, *, params_column="Assembly Params",
     unit = _UNIT_BY_TYPE.get(typ, "?")
     meas = raw.get("measurement") or raw.get("Measurement") or 0
     try:
-        meas = float(str(meas).split()[0]) if meas else 0.0
+        meas = float(str(meas).split()[0].replace(",", "")) if meas else 0.0
     except (ValueError, IndexError):
         meas = 0.0
     return {"subject": raw.get("subject") or raw.get("Subject") or "",
             "measurement": meas, "unit": unit,
             "params": raw.get(params_column, "") or "",
-            "status": raw.get(state_column) or "Verified"}
+            "status": raw.get(state_column) or "Proposed"}
 
 
 @dataclass
@@ -43,7 +43,7 @@ class ImportResult:
     warnings: list = field(default_factory=list)
 
 
-def process_markups(markups, factors, job, *, require_verified=True):
+def process_markups(markups, factors, job, *, require_verified=True, factor_units=None):
     res = ImportResult()
     for m in markups:
         subj = m["subject"]
@@ -54,7 +54,13 @@ def process_markups(markups, factors, job, *, require_verified=True):
             res.warnings.append(f"unverified ({status}): {subj}")
             continue
         if subj in expand._DISPATCH:
-            count = int(m.get("measurement") or 1)
+            raw_count = m.get("measurement") or 1
+            count = int(round(float(raw_count)))
+            if float(raw_count) != count:
+                res.warnings.append(
+                    f"non-integer ASM count rounded {raw_count}->{count}: {subj}")
+            if count < 1:
+                count = 1
             try:
                 items = expand.expand_marker(subj, m.get("params", ""),
                                              factors, job)
@@ -67,8 +73,16 @@ def process_markups(markups, factors, job, *, require_verified=True):
                     raw_total=round(it.raw_total * count, 2)))
         elif subj in factors:
             qty = float(m.get("measurement") or 0)
+            if qty == 0:
+                res.warnings.append(f"zero measurement: {subj}")
             rate = float(factors[subj])
-            res.line_items.append(LineItem(subj, subj, m.get("unit", "?"),
+            mu = m.get("unit", "?")
+            if factor_units and subj in factor_units and mu != "?" \
+                    and mu != factor_units[subj]:
+                res.warnings.append(
+                    f"unit mismatch [{subj}]: markup {mu} vs factor "
+                    f"{factor_units[subj]}")
+            res.line_items.append(LineItem(subj, subj, mu,
                                            qty, rate, round(qty * rate, 2)))
         else:
             res.intake.append({"subject": subj,

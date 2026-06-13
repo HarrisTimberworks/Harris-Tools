@@ -137,3 +137,41 @@ def test_markup_record_maps_bluebeam_entry():
     assert rec["unit"] == "SF"
     assert rec["measurement"] == 12.5
     assert rec["status"] == "Verified"
+
+
+def test_markup_record_strips_comma_thousands():
+    rec = importer.markup_record({"type": "Polygon", "subject": "S",
+                                  "measurement": "1,250.00 SF"})
+    assert rec["measurement"] == 1250.0
+
+
+def test_markup_record_missing_status_defaults_proposed():
+    rec = importer.markup_record({"type": "Count", "subject": "S"})
+    assert rec["status"] == "Proposed"
+
+
+def test_zero_measurement_warns():
+    r = importer.process_markups(
+        [_m("CASE-COMM - Base PLam - LF", 0, "LF")], FACTORS, JOB)
+    assert any("zero measurement" in w for w in r.warnings)
+
+
+def test_noninteger_asm_count_warns_and_rounds():
+    r = importer.process_markups(
+        [_m("ASM - Finished End (FF Flush) - EA", 2.4, "EA", "D=24 H=84")],
+        FACTORS, JOB)
+    assert any("non-integer ASM count" in w for w in r.warnings)
+    # 2.4 -> 2
+    one = importer.process_markups(
+        [_m("ASM - Finished End (FF Flush) - EA", 1, "EA", "D=24 H=84")],
+        FACTORS, JOB)
+    assert sum(li.raw_total for li in r.line_items) == pytest.approx(
+        sum(li.raw_total for li in one.line_items) * 2)
+
+
+def test_unit_mismatch_warns():
+    r = importer.process_markups(
+        [_m("CASE-COMM - Base PLam - LF", 5, "SF")], FACTORS, JOB,
+        factor_units={"CASE-COMM - Base PLam - LF": "LF"})
+    assert any("unit mismatch" in w for w in r.warnings)
+    assert len(r.line_items) == 1   # still priced
