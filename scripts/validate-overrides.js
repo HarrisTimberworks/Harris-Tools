@@ -65,7 +65,15 @@ function checkDeliveryDateConstraint(row, plJobs) {
 // where (masterPmId × station × crew × week) matches the row's From side
 // and compares against row.hours. A small floating-point epsilon protects
 // against the planner's toFixed(2) rounding leaving sums like 14.9999...
-function checkConsistency(row, baselinePlan) {
+//
+// Integration fix (Task 8, 2026-06-12): with current-week preservation, hours
+// in the current week sit on the board as preExisting subitems — NOT in
+// baselinePlan.placements (which only covers the new pass-1 placements). When
+// row.fromWeek === baselinePlan.nowContext.currentWeekMonday AND isMidWeek,
+// also sum matching existingSubs entries. Placements + preserved board rows
+// are disjoint sources so summing both never double-counts. Without existingSubs
+// arg or without nowContext on the plan, behavior is identical to before.
+function checkConsistency(row, baselinePlan, existingSubs) {
   if (!row.fromCrew || !row.fromWeek) {
     return { valid: true, reason: null };
   }
@@ -78,6 +86,24 @@ function checkConsistency(row, baselinePlan) {
     if (p.week !== row.fromWeek) continue;
     allocated += Number(p.hours || 0);
   }
+
+  // Current-week preservation: if fromWeek is the current (mid-)week Monday,
+  // also count hours from board subitems (preExisting, not in placements).
+  const nowCtx = baselinePlan?.nowContext;
+  if (
+    existingSubs && existingSubs.length > 0 &&
+    nowCtx && nowCtx.isMidWeek &&
+    row.fromWeek === nowCtx.currentWeekMonday
+  ) {
+    for (const sub of existingSubs) {
+      if (String(sub.masterPmId) !== String(row.jobMpmId)) continue;
+      if (sub.station !== row.station) continue;
+      if (sub.parentCrew !== row.fromCrew) continue;
+      if (sub.parentWeek !== row.fromWeek) continue;
+      allocated += Number(sub.hours || 0);
+    }
+  }
+
   const EPS = 1e-6;
   if (allocated + EPS < row.hours) {
     return {
@@ -222,7 +248,10 @@ function checkCapacity(row, baselinePlan, allowOverCap) {
   const slot = baselinePlan?.capacityGrid?.[row.toCrew]?.[row.toWeek];
   if (!slot) return { valid: true, reason: null };
 
-  const cap = Number(slot.avail || 0);
+  const dayWeighted = slot.placeableAvail !== undefined ? Number(slot.placeableAvail) : null;
+  const cap = dayWeighted !== null ? Math.min(Number(slot.avail || 0), dayWeighted) : Number(slot.avail || 0);
+  const dayWeightedTag = dayWeighted !== null && cap === dayWeighted ? ' (day-weighted current week)' : '';
+
   const committed = Number(slot.committed || 0);
   const wouldBe = committed + Number(row.hours || 0);
   if (wouldBe <= cap) return { valid: true, reason: null };
@@ -231,12 +260,12 @@ function checkCapacity(row, baselinePlan, allowOverCap) {
     return {
       valid: true,
       reason: null,
-      softWarning: `${row.toCrew} ${row.toWeek} would be ${wouldBe.toFixed(2)}/${cap} (over cap by ${(wouldBe - cap).toFixed(2)} hrs) — Allow Over-Cap is checked`,
+      softWarning: `${row.toCrew} ${row.toWeek} would be ${wouldBe.toFixed(2)}/${cap} (over cap by ${(wouldBe - cap).toFixed(2)} hrs) — Allow Over-Cap is checked${dayWeightedTag}`,
     };
   }
   return {
     valid: false,
-    reason: `${row.toCrew} ${row.toWeek} would be ${wouldBe.toFixed(2)}/${cap} hrs (over cap by ${(wouldBe - cap).toFixed(2)}). Tick Allow Over-Cap to apply anyway.`,
+    reason: `${row.toCrew} ${row.toWeek} would be ${wouldBe.toFixed(2)}/${cap} hrs (over cap by ${(wouldBe - cap).toFixed(2)}). Tick Allow Over-Cap to apply anyway.${dayWeightedTag}`,
   };
 }
 
@@ -307,7 +336,7 @@ function resolveRow(rawRow, plJobs, crewParents) {
 //
 // Each conflict entry is the resolved-or-raw row plus { decision: 'conflict',
 // reason }. The reason combines all failing checks for that row.
-function validateAll(rawRows, baselinePlan, plJobs, crewParents, jobWindows) {
+function validateAll(rawRows, baselinePlan, plJobs, crewParents, jobWindows, existingSubs) {
   const accepted = [];
   const conflicts = [];
 
@@ -341,7 +370,7 @@ function validateAll(rawRows, baselinePlan, plJobs, crewParents, jobWindows) {
     const w = checkWindowMembership(row, jobWindows);
     if (!w.valid) reasons.push(w.reason);
 
-    const c = checkConsistency(row, baselinePlan);
+    const c = checkConsistency(row, baselinePlan, existingSubs);
     if (!c.valid) reasons.push(c.reason);
 
     const cap = checkCapacity(row, baselinePlan, row.allowOverCap);

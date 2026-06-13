@@ -107,6 +107,11 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
 
   // --plan mode: two-pass driver.
 
+  // Task 8 (2026-06-12): resolve the effective planning week once, at the
+  // top of the plan pass. Both runPlan calls and the jobWindows loop use it
+  // so windows and placements are clamp-consistent.
+  const ctx = (deps.nowContext || reb.nowContext)();
+
   // AUDIT FIX (2026-06-11) — config lint: surface silent no-op shapes in
   // config/rebalance-overrides.json (typo'd ids, 'station' vs 'stations',
   // non-Monday weeks) loudly at the top of every run. Never blocks the run.
@@ -143,7 +148,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   // don't exist there is rejected with no further reasoning.
   const baselineBoards = { ...boards, overrideRows: [] };
   console.log('\n--- Pass 1: baseline plan (no board overrides) ---');
-  const baselinePlan = await _runPlan(baselineBoards);
+  const baselinePlan = await _runPlan(baselineBoards, { nowContext: ctx });
 
   // B7-followup: build jobWindows = { [jobId]: <computeWindows result> } so
   // the validator's checkWindowMembership can reject out-of-window forces
@@ -154,7 +159,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   const jobWindows = {};
   for (const job of boards.jobs || []) {
     try {
-      const w = _computeWindows(job);
+      const w = _computeWindows(job, { effectiveWeek: ctx.effectiveWeek });
       if (w) jobWindows[job.id] = w;
     } catch (e) {
       // Silently skip — leave the job out of jobWindows. Logging would
@@ -169,7 +174,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   // count (they're not "to-be-validated" rows from the operator's POV).
   const toValidate = (boards.overrideRows || []).filter(r => r.status === 'Pending' || r.status === 'Applied');
   console.log(`\n--- Validating ${toValidate.length} Pending/Applied override row(s) against baseline ---`);
-  const validation = _validateAll(toValidate, baselinePlan, boards.jobs, boards.crewParents, jobWindows);
+  const validation = _validateAll(toValidate, baselinePlan, boards.jobs, boards.crewParents, jobWindows, boards.existingSubs);
 
   console.log('\n=== OVERRIDE VALIDATION ===');
   console.log(`Accepted: ${validation.accepted.length}`);
@@ -218,7 +223,7 @@ async function runPlanner({ mode = 'plan', options = {}, deps = {} } = {}) {
   // CLI exits nonzero via the planError marker.
   let finalPlan;
   try {
-    finalPlan = await _runPlan(finalBoards);
+    finalPlan = await _runPlan(finalBoards, { nowContext: ctx });
   } catch (e) {
     const msg = e.message || String(e);
     console.log(`\n✗ PLANNER ERROR in pass 2 — run aborted, previous good state preserved: ${msg}`);

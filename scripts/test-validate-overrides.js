@@ -845,6 +845,163 @@ function syntheticBaselinePlan() {
       JSON.stringify(out2.conflicts.map(c => c.reason)));
   }
 
+  // ==========================================================================
+  // Task 8: checkCapacity honors placeableAvail (day-weighted current week)
+  // ==========================================================================
+
+  console.log('\nTest 45: checkCapacity — placeableAvail binding cap → Conflict, reason mentions day-weighted');
+  {
+    // Current-week slot: avail=40, committed=6, placeableAvail=0 (Friday-PM, 0 remaining days).
+    // row requests 8h → would be 14h which exceeds placeableAvail (0) → Conflict.
+    const planWithPlaceable = {
+      capacityGrid: {
+        Bob: {
+          '2026-06-08': { avail: 40, committed: 6, placeableAvail: 0 },
+        },
+      },
+      placements: [],
+    };
+    const r = resolvedRow({ toCrew: 'Bob', toWeek: '2026-06-08', hours: 8, allowOverCap: false });
+    const out = checkCapacity(r, planWithPlaceable, false);
+    check('invalid (placeableAvail=0 is binding)', out.valid === false, JSON.stringify(out));
+    check('reason mentions day-weighted', /day-weighted/i.test(out.reason || ''), out.reason || '(no reason)');
+  }
+
+  console.log('\nTest 46: checkCapacity — Allow Over-Cap still forces through with softWarning mentioning day-weighted');
+  {
+    const planWithPlaceable = {
+      capacityGrid: {
+        Bob: {
+          '2026-06-08': { avail: 40, committed: 6, placeableAvail: 0 },
+        },
+      },
+      placements: [],
+    };
+    const r = resolvedRow({ toCrew: 'Bob', toWeek: '2026-06-08', hours: 8, allowOverCap: true });
+    const out = checkCapacity(r, planWithPlaceable, true);
+    check('valid (allowOverCap)', out.valid === true, JSON.stringify(out));
+    check('softWarning present', typeof out.softWarning === 'string' && out.softWarning.length > 0, JSON.stringify(out));
+    check('softWarning mentions day-weighted', /day-weighted/i.test(out.softWarning || ''), out.softWarning || '(none)');
+  }
+
+  console.log('\nTest 47: checkCapacity — cells without placeableAvail behave exactly as before');
+  {
+    // No placeableAvail: uses avail=40, committed=30, row+8=38 < 40 → valid.
+    const r = resolvedRow({ toCrew: 'Ian', toWeek: '2026-05-25', hours: 8 });
+    const out = checkCapacity(r, syntheticBaselinePlan(), false);
+    check('valid (under nominal cap, no placeableAvail)', out.valid === true, JSON.stringify(out));
+    check('no softWarning', !out.softWarning, JSON.stringify(out));
+  }
+
+  console.log('\nTest 48: checkCapacity — placeableAvail > avail → avail still governs (min semantics)');
+  {
+    // placeableAvail=50 > avail=40; cap = min(40, 50) = 40.
+    // committed=35 + 8 = 43 > 40 → Conflict.
+    const planHighPlaceable = {
+      capacityGrid: {
+        Bob: {
+          '2026-06-15': { avail: 40, committed: 35, placeableAvail: 50 },
+        },
+      },
+      placements: [],
+    };
+    const r = resolvedRow({ toCrew: 'Bob', toWeek: '2026-06-15', hours: 8, allowOverCap: false });
+    const out = checkCapacity(r, planHighPlaceable, false);
+    check('invalid (avail is binding, not placeableAvail)', out.valid === false, JSON.stringify(out));
+    // avail is binding, not placeableAvail, so no day-weighted tag
+    check('reason does NOT mention day-weighted (avail bound)', !/day-weighted/i.test(out.reason || ''), out.reason || '(none)');
+  }
+
+  // ==========================================================================
+  // Task 8: checkConsistency integration fix — preserved board subs for
+  // current-week rows (rows that have hours only as preExisting board subs,
+  // not as baselinePlan placements, because they're in the current week)
+  // ==========================================================================
+
+  console.log('\nTest 49: checkConsistency — From=currentWeek row with hours only as board subs → valid');
+  {
+    // currentWeekMonday 2026-06-08 is mid-week (isMidWeek true).
+    // Baseline has 0 placements for (Bob, Benchwork, 2026-06-08) because the
+    // current week's hours are preExisting board subs, not new placements.
+    // existingSubs has 24h Bob/Benchwork/2026-06-08 for job MPM-A.
+    const planMidWeek = {
+      placements: [],  // zero baseline placements for current week
+      nowContext: { currentWeekMonday: '2026-06-08', effectiveWeek: '2026-06-08', isMidWeek: true },
+    };
+    const existingSubs = [
+      { id: 'sub-608-1', masterPmId: 'MPM-A', station: 'Benchwork', parentCrew: 'Bob', parentWeek: '2026-06-08', hours: 16 },
+      { id: 'sub-608-2', masterPmId: 'MPM-A', station: 'Benchwork', parentCrew: 'Bob', parentWeek: '2026-06-08', hours: 8 },
+    ];
+    const r = resolvedRow({
+      jobMpmId: 'MPM-A', station: 'Benchwork',
+      fromCrew: 'Bob', fromWeek: '2026-06-08',
+      toCrew: 'Ian', toWeek: '2026-05-25',
+      hours: 20,
+    });
+    const out = checkConsistency(r, planMidWeek, existingSubs);
+    check('valid (24h in subs covers 20h request)', out.valid === true, JSON.stringify(out));
+    check('reason null', out.reason === null, JSON.stringify(out));
+  }
+
+  console.log('\nTest 50: checkConsistency — From=currentWeek row with NO hours anywhere → still Conflict');
+  {
+    // No placements, no existingSubs for this job/station/crew/week → still Conflict.
+    const planMidWeek = {
+      placements: [],
+      nowContext: { currentWeekMonday: '2026-06-08', effectiveWeek: '2026-06-08', isMidWeek: true },
+    };
+    const existingSubs = [
+      // Different job
+      { id: 'other', masterPmId: 'MPM-Z', station: 'Benchwork', parentCrew: 'Bob', parentWeek: '2026-06-08', hours: 16 },
+    ];
+    const r = resolvedRow({
+      jobMpmId: 'MPM-A', station: 'Benchwork',
+      fromCrew: 'Bob', fromWeek: '2026-06-08',
+      toCrew: 'Ian', toWeek: '2026-05-25',
+      hours: 8,
+    });
+    const out = checkConsistency(r, planMidWeek, existingSubs);
+    check('invalid (no hours anywhere for this job/station/crew/week)', out.valid === false, JSON.stringify(out));
+    check('reason mentions baseline / allocates / 0', /baseline|allocat/i.test(out.reason || ''), out.reason || '(none)');
+  }
+
+  console.log('\nTest 51: checkConsistency — From=futureWeek ignores existingSubs (legacy path)');
+  {
+    // fromWeek 2026-06-15 is NOT the currentWeekMonday → existingSubs not consulted.
+    // Baseline has placements for 2026-06-15 for this job.
+    const planMidWeek = {
+      placements: [
+        { masterPmId: 'MPM-A', station: 'Benchwork', crew: 'Bob', week: '2026-06-15', hours: 16 },
+      ],
+      nowContext: { currentWeekMonday: '2026-06-08', effectiveWeek: '2026-06-08', isMidWeek: true },
+    };
+    const existingSubs = [
+      // These are for 2026-06-08 (current week) — should be ignored for future-week check
+      { id: 'sub', masterPmId: 'MPM-A', station: 'Benchwork', parentCrew: 'Bob', parentWeek: '2026-06-08', hours: 40 },
+    ];
+    const r = resolvedRow({
+      jobMpmId: 'MPM-A', station: 'Benchwork',
+      fromCrew: 'Bob', fromWeek: '2026-06-15',
+      toCrew: 'Ian', toWeek: '2026-05-25',
+      hours: 10,
+    });
+    const out = checkConsistency(r, planMidWeek, existingSubs);
+    check('valid (16h in placements for future week)', out.valid === true, JSON.stringify(out));
+  }
+
+  console.log('\nTest 52: checkConsistency — no existingSubs arg → legacy behavior, no change');
+  {
+    // Three-arg call (no existingSubs). Future-week fromWeek 2026-05-18 has placements.
+    const r = resolvedRow({
+      jobMpmId: 'MPM-A', station: 'Benchwork',
+      fromCrew: 'Ian', fromWeek: '2026-05-18',
+      toCrew: 'Spencer', toWeek: '2026-05-25',
+      hours: 10,
+    });
+    const out = checkConsistency(r, syntheticBaselinePlan());  // no 3rd arg
+    check('valid (15h placements, legacy 2-arg path)', out.valid === true, JSON.stringify(out));
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);
