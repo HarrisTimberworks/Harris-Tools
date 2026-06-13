@@ -93,7 +93,7 @@ def _rate(factors, subject):
 def _line(component, subject, unit, qty, factors):
     rate = _rate(factors, subject)
     return LineItem(component, subject, unit, round(qty, 4), rate,
-                    round(qty * rate, 4))
+                    round(qty * rate, 2))
 
 
 FF_FE_PANEL_ALSO_FINISHED = False
@@ -168,6 +168,13 @@ def expand_job(lib_path, markers, job):
     crashes the batch."""
     from . import library
     factors = {r.subject: r.raw_cost for r in library.load_factors(lib_path)}
+
+    # Validate job_config upfront
+    REQUIRED_JOB = ("finish_subject", "door_subject", "panel_subject")
+    missing = [k for k in REQUIRED_JOB if k not in job]
+    if missing:
+        raise ValueError(f"job_config missing keys: {missing}")
+
     items, errors = [], []
     for subject, params_str in markers:
         try:

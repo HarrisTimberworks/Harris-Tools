@@ -117,7 +117,7 @@ def test_expand_ff_fe_end():
     assert bs["FF FinEnds - FF FE (*Add Door Sf)"].raw_total == pytest.approx(60.0)
     door = bs["DOOR - Slab - Paint Grade"]
     assert door.qty == pytest.approx(11.8125)
-    assert door.raw_total == pytest.approx(212.625)
+    assert door.raw_total == pytest.approx(212.62)
     assert "FIN - Stain (1 Sided)" not in bs
 
 
@@ -196,3 +196,11 @@ def test_expand_job_reports_missing_factor_not_crash(tmp_path):
     items, errors = expand.expand_job(lib, markers, job)
     assert items == []
     assert len(errors) == 1 and "FIN - Stain (1 Sided)" in errors[0]
+
+
+def test_expand_job_rejects_incomplete_config(tmp_path):
+    from estimating import library
+    lib = tmp_path / "lib.xlsx"
+    library.create_library(lib)
+    with pytest.raises(ValueError, match="job_config missing"):
+        expand.expand_job(lib, [], {"finish_subject": "x"})
