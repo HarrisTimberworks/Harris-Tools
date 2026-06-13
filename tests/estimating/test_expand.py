@@ -26,3 +26,25 @@ def test_parse_empty_is_empty():
 def test_parse_rejects_malformed_token():
     with pytest.raises(ValueError, match="cannot parse"):
         expand.parse_params("W=36 GARBAGE H=84")
+
+
+def test_interior_sf_worked_example():
+    # W=36 H=84 D=24 SH=3:
+    # back 36*84=3024 + sides 2*24*84=4032 + top 36*24=864 + bottom 864
+    # + shelves 3*36*24*2=5184  => 13968 in^2 / 144 = 97.0 SF
+    assert expand.interior_one_sided_sf(36, 84, 24, 3) == pytest.approx(97.0)
+
+
+def test_interior_sf_zero_shelves():
+    # back 3024 + sides 4032 + top 864 + bottom 864 = 8784 /144 = 61.0
+    assert expand.interior_one_sided_sf(36, 84, 24, 0) == pytest.approx(61.0)
+
+
+def test_finished_end_sf():
+    # D=24 H=84 -> 2016 in^2 /144 = 14.0 SF
+    assert expand.finished_end_sf(24, 84) == pytest.approx(14.0)
+
+
+def test_faux_door_sf():
+    # FF FE: (24-3)*(84-3) = 21*81 = 1701 /144 = 11.8125 SF
+    assert expand.faux_door_sf(24, 84) == pytest.approx(11.8125)

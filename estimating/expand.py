@@ -32,3 +32,20 @@ def parse_params(s):
 def _sf(*inches_pairs):
     """sum of (a*b) inch-products converted to square feet."""
     return sum(a * b for a, b in inches_pairs) / 144.0
+
+
+def interior_one_sided_sf(W, H, D, SH):
+    """1-sided-equivalent finish SF for a finished interior.
+    back + 2 sides + top + bottom + shelves(x2, two-sided)."""
+    return _sf((W, H), (D, H), (D, H), (W, D), (W, D),
+               *([(W, D)] * (int(SH) * 2)))
+
+
+def finished_end_sf(D, H):
+    """Exposed end face = depth x height, 1-sided."""
+    return _sf((D, H))
+
+
+def faux_door_sf(D, H):
+    """FF FE faux door: cabinet side minus 1.5in reveal all around (=-3in)."""
+    return _sf((D - 3.0, H - 3.0))
