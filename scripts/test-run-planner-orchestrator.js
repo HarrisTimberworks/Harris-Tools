@@ -816,6 +816,7 @@ function makeFakeBoards() {
       JSON.stringify(writebackCalls[1]));
     const blob = captured.join('\n');
     check('failure surfaced loudly in console', /✗.*[Pp]ass 2|PLANNER ERROR|planner error/i.test(blob), blob.slice(-500));
+    check('planError result still carries progressWarnings array', Array.isArray(result?.progressWarnings), typeof result?.progressWarnings);
   }
 
   console.log('\nTest 5b: AUDIT FIX — execute refuses a plan older than 24h unless --force');

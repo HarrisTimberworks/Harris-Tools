@@ -182,6 +182,8 @@ console.log('\nTest 4 (spec 2026-06-12 §Code 4): force exceeding board-shrunk r
         (result?.warnings || []).some(w => /exceeds remaining job budget/.test(w)),
         JSON.stringify(result?.warnings));
   check('no spurious unplaced hours', Math.abs(result?.unplaced || 0) < 0.01, `unplaced=${result?.unplaced}`);
+  check('exactly one placement (no spurious auto top-up beside the force)',
+        (result?.placements || []).length === 1, JSON.stringify(result?.placements));
 }
 
 console.log();
