@@ -142,3 +142,20 @@ def expand_closet_run(p, factors, job):
                                job["finish_subject"], "SF",
                                psf * CLOSET_PANEL_FINISH_SIDES, factors))
     return items
+
+
+_DISPATCH = {
+    "ASM - Finished End (Frameless) - EA": expand_frameless_end,
+    "ASM - Finished End (FF Flush) - EA": expand_ff_flush_end,
+    "ASM - Finished End (FF FE) - EA": expand_ff_fe_end,
+    "ASM - Open Interior - EA": expand_interior,
+    "ASM - Glass Door Interior - EA": expand_interior,
+    "ASM - Closet Run - EA": expand_closet_run,
+}
+
+
+def expand_marker(subject, params_str, factors, job):
+    fn = _DISPATCH.get(subject)
+    if fn is None:
+        raise ValueError(f"no expander for subject {subject!r}")
+    return fn(parse_params(params_str), factors, job)

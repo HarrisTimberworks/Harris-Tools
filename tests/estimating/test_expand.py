@@ -141,3 +141,30 @@ def test_expand_closet_run_material():
 def test_missing_factor_raises():
     with pytest.raises(KeyError, match="not in factor library"):
         expand.expand_frameless_end({"D": 24, "H": 84}, {}, JOB)
+
+
+def test_dispatch_routes_each_subject():
+    cases = {
+        "ASM - Finished End (Frameless) - EA": "D=24 H=84",
+        "ASM - Finished End (FF Flush) - EA": "D=24 H=84",
+        "ASM - Finished End (FF FE) - EA": "D=24 H=84",
+        "ASM - Open Interior - EA": "W=36 H=84 D=24 SH=3",
+        "ASM - Glass Door Interior - EA": "W=36 H=84 D=24 SH=3",
+        "ASM - Closet Run - EA": "D=14 P=84x24",
+    }
+    for subject, params in cases.items():
+        items = expand.expand_marker(subject, params, FACTORS, JOB)
+        assert items and all(i.raw_total >= 0 for i in items)
+
+
+def test_dispatch_unknown_subject_raises():
+    with pytest.raises(ValueError, match="no expander"):
+        expand.expand_marker("ASM - Mystery - EA", "D=1 H=1", FACTORS, JOB)
+
+
+def test_glass_equals_open():
+    a = expand.expand_marker("ASM - Open Interior - EA",
+                             "W=36 H=84 D=24 SH=3", FACTORS, JOB)
+    b = expand.expand_marker("ASM - Glass Door Interior - EA",
+                             "W=36 H=84 D=24 SH=3", FACTORS, JOB)
+    assert a[0].raw_total == b[0].raw_total
