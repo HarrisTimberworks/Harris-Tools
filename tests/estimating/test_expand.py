@@ -48,3 +48,29 @@ def test_finished_end_sf():
 def test_faux_door_sf():
     # FF FE: (24-3)*(84-3) = 21*81 = 1701 /144 = 11.8125 SF
     assert expand.faux_door_sf(24, 84) == pytest.approx(11.8125)
+
+
+def test_parse_rejects_truncated_panel():
+    with pytest.raises(ValueError, match="panel token"):
+        expand.parse_params("D=14 P=84")
+
+
+def test_parse_rejects_unknown_key():
+    with pytest.raises(ValueError, match="unknown param key"):
+        expand.parse_params("W=36 SN=3")
+
+
+def test_faux_door_rejects_tiny_dims():
+    with pytest.raises(ValueError):
+        expand.faux_door_sf(2, 84)   # D<=3 -> would be negative
+
+
+def test_finished_end_rejects_nonpositive():
+    with pytest.raises(ValueError):
+        expand.finished_end_sf(0, 84)
+
+
+def test_interior_rejects_nonpositive_but_allows_zero_shelves():
+    expand.interior_one_sided_sf(36, 84, 24, 0)   # ok
+    with pytest.raises(ValueError):
+        expand.interior_one_sided_sf(0, 84, 24, 2)
