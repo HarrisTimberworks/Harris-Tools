@@ -193,6 +193,28 @@ function jobsByIdFixture() {
     check('Ken Hrs cell NOT wrenched', /\| Ken \| 12 \/ 40 \| Job A \| Panel \| 12 \|/.test(out.markdown), out.markdown);
   }
 
+  console.log('\nTest 12: Task 10 — future-week briefing never gets in-progress annotation even when nowContext present');
+  {
+    // plan.nowContext says current week is 2026-06-08 (mid-week, isMidWeek:true).
+    // The briefing is for 2026-06-15 (next week) via weekISO override.
+    // The heading for 2026-06-15 must NOT contain the annotation.
+    const planWithCtx = Object.assign({}, planFixture(), {
+      nowContext: {
+        currentWeekMonday: '2026-06-08',
+        effectiveWeek: '2026-06-08',
+        remainingWorkdays: 2,
+        isMidWeek: true,
+      },
+    });
+    const out = buildWeeklyBriefingDoc(planWithCtx, jobsByIdFixture(), [], {
+      weekISO: '2026-06-15',
+      generatedAt: new Date('2026-06-10T14:00:00Z'),
+    });
+    check('future-week briefing heading has no in-progress annotation',
+      !/in progress/.test(out.markdown),
+      out.markdown.split('\n').find(l => /^## Week of/.test(l)) || 'no heading');
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

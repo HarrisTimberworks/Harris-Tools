@@ -340,6 +340,98 @@ const EXPECTED_WEEKS = [
       `wrenchCount=${wrenchCount}`);
   }
 
+  // Task 10 (2026-06-12) — current-week header annotation + clamp block
+
+  console.log('\nTest 14: current-week header annotated when nowContext present and mid-week');
+  {
+    // plan.nowContext = { currentWeekMonday:'2026-06-01', effectiveWeek:'2026-06-01', remainingWorkdays:2, isMidWeek:true }
+    // generatedAt is REF_DATE → window starts 2026-06-01 which IS currentWeekMonday
+    const plan = makePlan({
+      nowContext: {
+        currentWeekMonday: '2026-06-01',
+        effectiveWeek: '2026-06-01',
+        remainingWorkdays: 2,
+        isMidWeek: true,
+      },
+    });
+    const out = buildCapacityViewDoc(plan, JOBS_BY_ID, [], { generatedAt: REF_DATE });
+    const headings = out.split('\n').filter(l => /^## Week of /.test(l));
+    const firstHeading = headings[0] || '';
+    check('week 6/1 heading contains in-progress annotation',
+      /in progress — 2 of 5 workdays remain/.test(firstHeading),
+      `firstHeading=${firstHeading}`);
+    check('week 6/8 heading does NOT have annotation',
+      !/in progress/.test(headings[1] || ''),
+      `secondHeading=${headings[1]}`);
+  }
+
+  console.log('\nTest 15: no nowContext (legacy plan JSON) → headers unchanged');
+  {
+    const plan = makePlan();  // no nowContext key
+    const out = buildCapacityViewDoc(plan, JOBS_BY_ID, [], { generatedAt: REF_DATE });
+    const hasAnnotation = /in progress/.test(out);
+    check('no in-progress annotation without nowContext', !hasAnnotation, hasAnnotation ? 'annotation present' : 'clean');
+    // Confirm headings still render normally
+    const headings = out.split('\n').filter(l => /^## Week of /.test(l));
+    check('still 8 headings', headings.length === 8, `count=${headings.length}`);
+    check('week 6/1 heading is plain (0.00)', /^## Week of 6\/1 — 0\.00 crew hrs$/.test(headings[0] || ''), headings[0]);
+  }
+
+  console.log('\nTest 16: clamp block renders when windowClamps is non-empty');
+  {
+    const plan = makePlan({
+      windowClamps: [
+        {
+          jobId: 'PL-A',
+          jobName: 'MAG - BCH',
+          station: 'bench',
+          computedStart: '2026-06-08',
+          computedEnd: '2026-06-12',
+          clampedStart: '2026-06-15',
+          clampedEnd: '2026-06-19',
+          entirelyPast: false,
+        },
+        {
+          jobId: 'PL-B',
+          jobName: 'F&B - Quince',
+          station: 'panel',
+          computedStart: '2026-06-01',
+          computedEnd: '2026-06-05',
+          clampedStart: '2026-06-08',
+          clampedEnd: '2026-06-12',
+          entirelyPast: true,
+        },
+      ],
+    });
+    const out = buildCapacityViewDoc(plan, JOBS_BY_ID, [], { generatedAt: REF_DATE });
+    check('clamp section heading present',
+      /## ⏰ Late work pulled forward/.test(out),
+      'heading not found');
+    check('BCH bench clamp line present',
+      /\*\*MAG - BCH\*\* \/ bench: computed 2026-06-08–2026-06-12 → 2026-06-15–2026-06-19/.test(out),
+      out.slice(out.indexOf('⏰') >= 0 ? out.indexOf('⏰') : 0, out.indexOf('⏰') + 300));
+    check('BCH bench line does NOT have entirely-past marker (entirelyPast:false)',
+      !(/\*\*MAG - BCH\*\*.*entirely past/.test(out)),
+      'unexpected entirely-past marker on BCH');
+    check('F&B panel line has entirely-past marker (entirelyPast:true)',
+      /\*\*F&B - Quince\*\*.*entirely past — late work/.test(out),
+      out.slice(out.indexOf('⏰') >= 0 ? out.indexOf('⏰') : 0, out.indexOf('⏰') + 400));
+  }
+
+  console.log('\nTest 17: no clamps → clamp block absent entirely');
+  {
+    const plan = makePlan({ windowClamps: [] });
+    const out = buildCapacityViewDoc(plan, JOBS_BY_ID, [], { generatedAt: REF_DATE });
+    check('no clamp section when windowClamps is empty array',
+      !/⏰ Late work pulled forward/.test(out),
+      'clamp section appeared unexpectedly');
+    const planNoKey = makePlan();  // windowClamps key absent
+    const out2 = buildCapacityViewDoc(planNoKey, JOBS_BY_ID, [], { generatedAt: REF_DATE });
+    check('no clamp section when windowClamps key absent',
+      !/⏰ Late work pulled forward/.test(out2),
+      'clamp section appeared without windowClamps key');
+  }
+
   console.log();
   if (failures.length > 0) {
     console.log(`❌ ${failures.length} failure(s) of ${checks} checks:`);

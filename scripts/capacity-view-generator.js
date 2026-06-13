@@ -280,10 +280,17 @@ function isSubcontractor(crew, capacityGrid, weekISO) {
 // Heading: "## Week of M/D — XX.XX crew hrs". XX.XX is the sum of placement
 // hours for this week's placements, fixed to 2 decimals always (matches the
 // existing doc's "83.95" / "111.95" style).
+// Task 10 (2026-06-12): when plan.nowContext.isMidWeek and weekISO is the
+// currentWeekMonday, appends "*(in progress — N of 5 workdays remain)*".
 function buildHeading(weekISO, plan) {
   const placements = (plan?.placements || []).filter(p => p.week === weekISO);
   const total = placements.reduce((s, p) => s + Number(p.hours || 0), 0);
-  return `## Week of ${formatMD(weekISO)} — ${total.toFixed(2)} crew hrs`;
+  let heading = `## Week of ${formatMD(weekISO)} — ${total.toFixed(2)} crew hrs`;
+  const nc = plan?.nowContext;
+  if (nc?.isMidWeek && weekISO === nc.currentWeekMonday) {
+    heading += ` *(in progress — ${nc.remainingWorkdays} of 5 workdays remain)*`;
+  }
+  return heading;
 }
 
 // Key-dates block: 📌 finish drop, 🎯 finish return, 🚚 client delivery —
@@ -530,8 +537,20 @@ function buildCapacityViewDoc(plan, jobsById, timeOff, options) {
   );
 
   // Each section already ends with `---\n` (trailing divider from C2).
-  // Concatenate header → sections → legend.
-  return buildHeader(generatedAt) + sections.join('') + buildLegend();
+  // Task 10 (2026-06-12): clamp block — emitted after all week sections when
+  // plan.windowClamps is non-empty. Absent entirely when no clamps, so legacy
+  // plans (no windowClamps key) render byte-identical to before.
+  let clampBlock = '';
+  const clamps = plan?.windowClamps;
+  if (Array.isArray(clamps) && clamps.length > 0) {
+    const clampLines = clamps.map(c =>
+      `- **${c.jobName}** / ${c.station}: computed ${c.computedStart}–${c.computedEnd} → ${c.clampedStart}–${c.clampedEnd}${c.entirelyPast ? ' *(entirely past — late work)*' : ''}`
+    );
+    clampBlock = `## ⏰ Late work pulled forward\n\n${clampLines.join('\n')}\n\n`;
+  }
+
+  // Concatenate header → sections → optional clamp block → legend.
+  return buildHeader(generatedAt) + sections.join('') + clampBlock + buildLegend();
 }
 
 // ============================================================================
