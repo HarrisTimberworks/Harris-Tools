@@ -13,10 +13,10 @@ You mostly *feed it facts*; it does the rest.
 | When | What happens automatically |
 |---|---|
 | Every minute | The planner checks the ▶️ Planner Trigger item. If someone requested a run or deploy, it executes it (~2–4 min). Otherwise: nothing, silently. |
-| Every Saturday 6:00 PM | Full planning run — fresh plan, fresh 📊 Capacity View, fresh 📋 Weekly Briefing for Monday morning. Boards are NOT rewritten (plan-only). |
+| Every Saturday 6:00 PM | Full planning run for the **upcoming** week — fresh plan, fresh 📊 Capacity View, fresh 📋 Weekly Briefing for Monday morning. The just-finished week is closed; placements land Monday onward. Boards are NOT rewritten (plan-only). |
 | Daily 6:00 AM | Rollups: Time Off hours, Command Center non-production hours, cross-training audit. |
 | Daily 8:15 AM | Manual Overrides board housekeeping: override rows whose week has passed are moved to the Stale group (never-run Pending rows are auto-Cleared). |
-| On every planning run | Override rows are validated and stamped Applied/Conflict; jobs with all stations done flip to **Ready to Ship**; new **Ready to Schedule** jobs that got planned flip to **Scheduled**; both output docs regenerate; the trigger item gets a run-summary update; ⏳ shop-floor progress notes land in the run summary. |
+| On every planning run | Override rows are validated and stamped Applied/Conflict; jobs with all stations done flip to **Ready to Ship**; new **Ready to Schedule** jobs that got planned flip to **Scheduled**; both output docs regenerate; the trigger item gets a run-summary update; ⏳ shop-floor progress notes land in the run summary. Late station windows are pulled forward automatically and reported (⏰ in the run summary); mid-week, the current week only accepts new work that still fits in the remaining workdays. |
 | Every minute | The same poll also answers 💬 Quote rows: any quote at **Quote Requested** is computed against live shop load and answered on the row (~1–2 min; up to 3 per minute). |
 | On every planning run | Current dealer lead-times artifacts regenerate (`logs/lead-times.json` + HTML snippet) from the reference basket in `config/quote-policy.json`. |
 | When something needs a human | Chris gets a monday notification: override conflicts, planner errors, doc-write failures, config errors, a skipped Saturday run, or any deploy. Clean runs are silent. |
@@ -47,7 +47,7 @@ The next planning run schedules from your number instead of the estimate/config.
 - Job running over the estimate? Enter the bigger number — the schedule absorbs it.
 - **0 means nothing left.** If the station is truly done, tick ✅ Stations Complete instead of typing 0.
 - Clearing the cell hands the station back to the estimate/config.
-- Window slips ("bench didn't happen this week") are still override rows (§2.4) or Chris (§4.2) — ⏳ changes how much work is left, not when it lands.
+- Window slips that have already happened ("bench didn't happen this week") fix themselves: once the week rolls over, the planner pulls the late window forward automatically (⏰ in the run summary). Deliberately moving *upcoming* work between weeks is still override rows (§2.4) or Chris (§4.2) — ⏳ changes how much work is left, not when it lands.
 
 ### 2.2 Get a fresh plan + fresh docs (anyone)
 
@@ -61,7 +61,7 @@ Result: validated override rows (Applied/Conflict), regenerated 📊 Capacity Vi
 
 Same as 2.2 but set Status to **Deploy Requested**.
 
-The planner runs a fresh plan AND applies it: Crew Allocation subitems are rewritten for every re-planned job, and Finish Drop/Return dates land on the Production Load Board. Chris is notified on every deploy. Safeties that run automatically: invalid finishing cycles block the deploy; jobs the plan didn't re-place keep their existing rows.
+The planner runs a fresh plan AND applies it: Crew Allocation subitems are rewritten for every re-planned job, and Finish Drop/Return dates land on the Production Load Board. Chris is notified on every deploy. Safeties that run automatically: invalid finishing cycles block the deploy; jobs the plan didn't re-place keep their existing rows; **past weeks are never touched** (history), and **this week's existing rows are kept as-is** (committed reality) — only future weeks are rewritten. Exception: a job whose override row moves work into/out of the current week gets its current week rewritten too.
 
 **Deploy when:** you changed something that crews need to see on their boards (override applied, station marked done changing this week's work, date moved). **Just Run when:** you only want to preview or refresh the docs.
 
@@ -89,7 +89,7 @@ The run flips the row to **Applied** (it's in the plan — look for 🔧 on the 
 1. Edit **Delivery Date on the Master PM Board** — the ONLY place delivery dates live. (The Production Load Board's delivery column is a mirror; don't fight it.)
 2. Request a run/deploy. The planner recomputes all station windows from the new date.
 
-> If production is already in flight and windows land in the past, the run's warnings will say so — that currently needs Chris (config window override).
+> If production is already in flight and computed windows land in the past, the planner pulls them forward to the current week automatically and reports it (⏰ in the run summary; 🚨 + a notification to Chris if hours can no longer fit before delivery).
 
 ### 2.6 New job intake (Chris or Jonathan)
 
@@ -145,7 +145,7 @@ node scripts/setup-trigger-item.js        # recreate the trigger item if ever lo
 ### 4.2 Config (`config/rebalance-overrides.json`) — commit immediately after every edit
 
 - `jobOverrides[id].remainingHours` — **legacy** partial-progress (pre-⏳). Still honored where the board's ⏳ cell is blank. Precedence: board ticks > board ⏳ Hrs Left > config > formula. ⚠️ Never delete individual station keys (the planner reads the object whole — a missing key means 0, not "use formula"); delete a job's whole object at completion or not at all. New partial progress belongs on the board (§2.1).
-- `jobOverrides[id].customWindow` — force a station's week range (starts must be Mondays).
+- `jobOverrides[id].customWindow` — force a station's week range (starts must be Mondays). Hand-set windows are never auto-clamped; the lint flags any window lying entirely in the past as stale — remove those.
 - `forceAssignments` — pin crew/job/**stations (array!)**/week/hours.
 - `crewCapacityOverrides[week][crew]` — reduced hours, holidays, weekend boosts.
 - `subcontractors[week]` — virtual-crew pools.
@@ -182,6 +182,7 @@ Routing chains, start dates (`BOB_START_DATE`), departures (`CREW_END_DATES`) li
 | Numbers look wrong everywhere | Check the trigger updates for config-lint errors; check Stations Complete ticks vs reality | Chris. |
 | Quote row stuck **Quoting** >5 min | The quote died mid-flight (sleep/crash); self-heal flips it to Quote Error within ~5 min | Set back to **Quote Requested** to retry. |
 | Quote Error on every row + notification about quote-policy | `config/quote-policy.json` failed lint | Chris: fix the config, commit, rows retry on the next request. |
+| ⏰ Window clamps in the run summary | A job is running behind its computed schedule; the planner pulled the late station(s) forward | Usually nothing — informational. If 🚨 UNPLACED appears with it, hours no longer fit before delivery: move the delivery date or add capacity. |
 
 **Never:** hand-edit Crew Allocation subitems for active jobs (a deploy overwrites them — use override rows instead); edit the generated docs; edit PLB window columns (display-only); set non-Monday weeks anywhere; put "Run/Deploy Requested" on an override **row** (trigger item only — a non-Pending row is skipped silently).
 

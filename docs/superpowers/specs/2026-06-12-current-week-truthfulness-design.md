@@ -1,7 +1,7 @@
 # Current-Week Truthfulness — Design Spec
 
 **Date:** 2026-06-12
-**Status:** Decisions D1–D5 settled with Chris 2026-06-12; spec awaiting Chris's review. Build not started.
+**Status:** LIVE on main 2026-06-12 (build record below). D5 cleanup pending the first weekend rollover run.
 **Owner system:** HTW production scheduling (Phases 1–3 LIVE on `main` — this is additive; nothing retired gets rebuilt).
 **Sibling:** partial-station progress / Hrs Left (spec'd + planned, not built). Independent build order; merge point is the run-summary sections both features add.
 
@@ -119,3 +119,19 @@ All in existing files; one new test-support concept (injectable clock).
 - monday-side automation changes; the Manual Overrides board schema.
 
 Build record appended to this spec when the feature lands.
+
+## Build record — 2026-06-12 (evening session)
+
+Built in worktree `feat/current-week-truthfulness` via subagent-driven development (5 implementer batches, Sonnet; main-session diff review + independent suite run after each batch), merged to main same evening with Chris's approval. Suite: 32 test files at baseline → **37 files, 0 failures** at merge (~+120 checks across 6 new/extended test files). The Hrs Left sibling and Lead Time Calculator V2 landed on main in parallel sessions during this build; final merge was conflict-free.
+
+**Commits (plan Tasks 2–11):** `510f900` nowContext · `0df6c84` computeWindows clamping · `a61dc33` runPlan effectiveWeek/windowClamps/unplacedTotal · `b4cc9c0` day-weighted placeable · `8a87a41` current-week preservation + subtraction · `7719350` week-aware delete guard + rewrite opt-out · `ef706ad` validator placeableAvail + consistency fix · `8ba56da` trigger summary/notify · `c6ec65e` capacity view annotation + clamp block · `cefb2df` stale-customWindow lint · `867e457` merge main.
+
+**Decisions settled during the build:**
+1. **Clamped chains recompute downstream (incl. finish drop/return).** Clamping a station forward moves the anchors later stations (and the finishing cycle) compute from — the cycle is re-checked against reality and goes to an invalid FCV row if broken. "Never altered" in D2 means the clamp function doesn't touch drop/return directly.
+2. **Validator consistency fix (not in the plan, caught in batch-C review):** `checkConsistency` only summed baseline *placements*; preserved current-week hours are `preExisting`, so a From=current-week move row would always false-Conflict. Fix: `validateAll` gains an optional `existingSubs` param (run-planner passes `boards.existingSubs`); when `row.fromWeek === baselinePlan.nowContext.currentWeekMonday && isMidWeek`, matching board subitems count toward the From-side hours. Disjoint sources — never double-counts.
+3. **runPlan no longer dies on a computeWindows throw** (bad customWindow config): per-job try/catch degrades to a loud warning + job skip; the job's existing rows are protected by the delete guard. Better than the old whole-run abort.
+4. **`buildCapacityGrid` exported**; signature `(crewParents, timeOffList, weeks, existingSubs, activeJobMasterPmIds, ctx = null, preserveOpts = null)` — both new params optional, legacy callers unchanged.
+
+**Live verification (Friday evening 2026-06-12, DRY_RUN in worktree):** `nowContext { currentWeekMonday: 2026-06-08, effectiveWeek: 2026-06-08, remainingWorkdays: 0, isMidWeek: true }`; `placeableAvail: 0` on every crew's current-week cell; **0 new placements in the dying week**; Ken's deployed 2h BCH Panel row loaded as preExisting. Diff vs the production plan generated 11 min earlier by old code: **exactly 1 difference** — old code re-placed that 2h into 6/08 and queued its subitem (id 12267927924) for deletion (33 deletes); new code preserves it (32 deletes). Bonus: the stale-window lint flagged 15 customWindows on already-delivered jobs (Edge Optics, Cator Ruma, R5-P1, Gilbert, Liz Stapp, SHI, Quince) — cleanup candidates beyond D5's scope.
+
+**Post-merge:** suite green on main; live exercise via ▶️ Planner Trigger Run Requested (summary sections verified). **Pending:** Saturday 18:00 auto-run = first natural weekend rollover (expect effectiveWeek 2026-06-15, dead week absent from grid); D5 stop-gap removal after that run (clamps reproduce the stop-gap windows only once effectiveWeek = 6/15); Chris-triggered mid-week-deploy preservation check (plan Task 13 procedure).
